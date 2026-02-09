@@ -1,0 +1,25 @@
+[package]
+name = "aiprotodsl"
+version = "0.1.0"
+edition = "2021"
+description = "DSL for protocol encoding definition with codec (encode/decode), validation, and frame handling"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/yourusername/AIProtoDSL"
+documentation = "https://docs.rs/aiprotodsl"
+readme = "README.md"
+keywords = ["protocol", "dsl", "binary", "codec", "serialization"]
+categories = ["encoding", "parser-implementations"]
+
+[dependencies]
+pest = "2.7"
+pest_derive = "2.7"
+thiserror = "1.0"
+anyhow = "1.0"
+byteorder = "1.5"
+
+[dev-dependencies]
+tempfile = "3.10"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"

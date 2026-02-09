@@ -1,0 +1,100 @@
+//! Protocol Encoding DSL Grammar (PEST)
+//!
+//! Structure: transport (headers) -> messages -> structs -> base types
+//! Supports: bits, padding, reserved, range values, length/count fields, compounds.
+
+WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
+COMMENT = _{ "//" ~ (!"\n" ~ ANY)* | "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
+
+// --- Top-level ---
+protocol = { SOI ~ (transport_section)? ~ (message_section)* ~ (struct_section)* ~ EOI }
+
+transport_section = { "transport" ~ "{" ~ transport_field* ~ "}" }
+message_section   = { "message" ~ ident ~ "{" ~ message_field* ~ "}" }
+struct_section    = { "struct" ~ ident ~ "{" ~ struct_field* ~ "}" }
+
+// --- Transport (frame/header envelope) ---
+transport_field = {
+    ident ~ ":" ~ transport_type_spec ~ ("=" ~ literal)? ~ ("[" ~ constraint ~ "]")? ~ ";"
+}
+transport_type_spec = {
+    base_type
+    | padding_type
+    | reserved_type
+    | bitfield_type
+    | magic_type
+}
+magic_type = { "magic" ~ "(" ~ literal_bytes ~ ")" }
+
+// --- Message body fields ---
+message_field = {
+    ident ~ ":" ~ type_spec ~ ("=" ~ literal)? ~ ("[" ~ constraint ~ "]")? ~ ("if" ~ ident ~ "==" ~ literal)? ~ ";"
+}
+struct_field = {
+    ident ~ ":" ~ type_spec ~ ("=" ~ literal)? ~ ("[" ~ constraint ~ "]")? ~ ("if" ~ ident ~ "==" ~ literal)? ~ ";"
+}
+
+// --- Type specifications ---
+type_spec = {
+    base_type
+    | padding_type
+    | reserved_type
+    | bitfield_type
+    | length_of_type
+    | count_of_type
+    | presence_bits_type
+    | fspec_type
+    | padding_bits_type
+    | list_type
+    | optional_type
+    | array_type
+    | struct_ref_type
+}
+
+// ASN.1-style bitmap: n bytes (1, 2, or 4); following optional fields use bits 0,1,2,...
+presence_bits_type = { "presence_bits" ~ "(" ~ num ~ ")" }
+// ASTERIX FSPEC: variable-length bytes until FX=0; 7 presence bits per byte; following optionals use bits 0,1,2,...
+fspec_type = { "fspec" }
+// Spare/reserved bits (zero on encode)
+padding_bits_type = { "padding_bits" ~ "(" ~ num ~ ")" }
+
+base_type = { "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | "bool" | "float" | "double" }
+
+padding_type   = { "padding" ~ "(" ~ num ~ ")" }
+reserved_type  = { "reserved" ~ "(" ~ num ~ ")" }
+bitfield_type  = { "bitfield" ~ "(" ~ num ~ ")" }
+
+length_of_type = { "length_of" ~ "(" ~ ident ~ ")" }
+count_of_type  = { "count_of" ~ "(" ~ ident ~ ")" }
+
+struct_ref_type = { ident }  // reference to a defined struct
+array_type      = { type_spec_inner ~ "[" ~ array_len ~ "]" }
+list_type       = { "list" ~ "<" ~ type_spec_inner ~ ">" }
+optional_type   = { "optional" ~ "<" ~ type_spec_inner ~ ">" }
+
+type_spec_inner = {
+    base_type
+    | padding_type
+    | reserved_type
+    | bitfield_type
+    | padding_bits_type
+    | struct_ref_type
+}
+
+array_len = { ident | num }  // count field name or constant
+
+// --- Constraints (validation) ---
+constraint = { range_constraint | enum_constraint }
+range_constraint = { num ~ ".." ~ num }
+enum_constraint  = { "in" ~ "(" ~ literal ~ ("," ~ literal)* ~ ")" }
+
+// --- Literals ---
+literal = { num | "true" | "false" | hex_literal | string_literal }
+literal_bytes = { string_literal | hex_literal }
+num = @{ ("-")? ~ ("0" | ('1'..'9' ~ ('0'..'9')*)) }
+hex_literal = @{ "0x" ~ ('0'..'9' | 'a'..'f' | 'A'..'F')+ }
+string_literal = @{ "\"" ~ (!"\"" ~ ( "\\" ~ ANY | ANY ))* ~ "\"" }
+
+ident_start = @{ 'a'..'z' | 'A'..'Z' | "_" }
+ident_rest  = @{ 'a'..'z' | 'A'..'Z' | '0'..'9' | "_" }
+ident = @{ ident_start ~ ident_rest* }
