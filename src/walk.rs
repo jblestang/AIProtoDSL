@@ -104,6 +104,33 @@ fn read_bitmap_n(data: &[u8], pos: &mut usize, endianness: Endianness, n: u64) -
 }
 
 fn read_i64_slice(data: &[u8], pos: &mut usize, spec: &TypeSpec, endianness: Endianness) -> Result<i64, CodecError> {
+    match spec {
+        TypeSpec::Bitfield(n) => {
+            let size = ((*n + 7) / 8) as usize;
+            let raw = read_bytes_to_u64(data, pos, size, endianness)?;
+            *pos += size;
+            return Ok(raw as i64);
+        }
+        TypeSpec::SizedInt(bt, n) => {
+            let size = ((*n + 7) / 8) as usize;
+            let mask = if *n >= 64 { u64::MAX } else { (1u64 << n) - 1 };
+            let raw = read_bytes_to_u64(data, pos, size, endianness)? & mask;
+            *pos += size;
+            let signed = matches!(bt, BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64);
+            let val = if signed && *n > 0 {
+                let sign_bit = 1i64 << (*n as i64 - 1);
+                if (raw as i64) >= sign_bit {
+                    (raw as i64) - (1i64 << *n as i64)
+                } else {
+                    raw as i64
+                }
+            } else {
+                raw as i64
+            };
+            return Ok(val);
+        }
+        _ => {}
+    }
     let (size, signed) = match spec {
         TypeSpec::Base(bt) => (base_type_size(bt), matches!(bt, BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64)),
         _ => return Err(CodecError::Validation("not a numeric type".to_string())),
@@ -125,11 +152,41 @@ fn read_i64_slice(data: &[u8], pos: &mut usize, spec: &TypeSpec, endianness: End
     Ok(if signed { n } else { n as u64 as i64 })
 }
 
+fn read_bytes_to_u64(data: &[u8], pos: &mut usize, len: usize, endianness: Endianness) -> Result<u64, CodecError> {
+    if *pos + len > data.len() {
+        return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+    }
+    let v = match (len, endianness) {
+        (1, _) => data[*pos] as u64,
+        (2, Endianness::Big) => BigEndian::read_u16(&data[*pos..]) as u64,
+        (2, Endianness::Little) => LittleEndian::read_u16(&data[*pos..]) as u64,
+        (4, Endianness::Big) => BigEndian::read_u32(&data[*pos..]) as u64,
+        (4, Endianness::Little) => LittleEndian::read_u32(&data[*pos..]) as u64,
+        (8, Endianness::Big) => BigEndian::read_u64(&data[*pos..]),
+        (8, Endianness::Little) => LittleEndian::read_u64(&data[*pos..]),
+        _ => {
+            let mut b = [0u8; 8];
+            let start = 8 - len;
+            b[start..].copy_from_slice(&data[*pos..*pos + len]);
+            match endianness {
+                Endianness::Big => BigEndian::read_u64(&b),
+                Endianness::Little => LittleEndian::read_u64(&b),
+            }
+        }
+    };
+    Ok(v)
+}
+
 fn validate_constraint_raw(value_i64: i64, c: &Constraint) -> Result<(), CodecError> {
     match c {
-        Constraint::Range { min, max } => {
-            if value_i64 < *min || value_i64 > *max {
-                return Err(CodecError::Validation(format!("value {} not in range {}..{}", value_i64, min, max)));
+        Constraint::Range(intervals) => {
+            let in_any = intervals.iter().any(|(min, max)| value_i64 >= *min && value_i64 <= *max);
+            if !in_any {
+                return Err(CodecError::Validation(format!(
+                    "value {} not in any interval {:?}",
+                    value_i64,
+                    intervals
+                )));
             }
         }
         Constraint::Enum(allowed) => {
@@ -236,7 +293,7 @@ impl<'a> BinaryWalker<'a> {
                 self.pos += n;
             }
             TypeSpec::Padding(n) | TypeSpec::Reserved(n) => self.pos += *n as usize,
-            TypeSpec::Bitfield(n) => self.pos += ((*n + 7) / 8) as usize,
+            TypeSpec::Bitfield(n) | TypeSpec::SizedInt(_, n) => self.pos += ((*n + 7) / 8) as usize,
             TypeSpec::LengthOf(_) | TypeSpec::CountOf(_) => {
                 if self.pos + 4 > self.data.len() {
                     return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
@@ -251,7 +308,7 @@ impl<'a> BinaryWalker<'a> {
                 let bitmap = read_bitmap_n(self.data, &mut self.pos, self.endianness, *n)?;
                 self.ctx.presence = WalkPresence::Bitmap(bitmap, 0);
             }
-            TypeSpec::Fspec => {
+            TypeSpec::Fspec | TypeSpec::FspecWithMapping(_) => {
                 let mut bytes = Vec::new();
                 loop {
                     if self.pos >= self.data.len() {
@@ -387,7 +444,7 @@ impl<'a> BinaryWalkerMut<'a> {
                 self.data[self.pos..self.pos + n].fill(0);
                 self.pos += n;
             }
-            TypeSpec::Base(_) | TypeSpec::Bitfield(_) => {
+            TypeSpec::Base(_) | TypeSpec::Bitfield(_) | TypeSpec::SizedInt(_, _) => {
                 self.skip_type_spec(spec, None)?;
             }
             TypeSpec::LengthOf(_) | TypeSpec::CountOf(_) => {
@@ -404,7 +461,7 @@ impl<'a> BinaryWalkerMut<'a> {
                 let bitmap = read_bitmap_n(self.data, &mut self.pos, self.endianness, *n)?;
                 self.ctx.presence = WalkPresence::Bitmap(bitmap, 0);
             }
-            TypeSpec::Fspec => {
+            TypeSpec::Fspec | TypeSpec::FspecWithMapping(_) => {
                 let mut bytes = Vec::new();
                 loop {
                     if self.pos >= self.data.len() {
@@ -493,7 +550,7 @@ impl<'a> BinaryWalkerMut<'a> {
                 self.pos += n;
             }
             TypeSpec::Padding(n) | TypeSpec::Reserved(n) => self.pos += *n as usize,
-            TypeSpec::Bitfield(n) => self.pos += ((*n + 7) / 8) as usize,
+            TypeSpec::Bitfield(n) | TypeSpec::SizedInt(_, n) => self.pos += ((*n + 7) / 8) as usize,
             TypeSpec::LengthOf(_) | TypeSpec::CountOf(_) => {
                 if self.pos + 4 > self.data.len() {
                     return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
@@ -508,7 +565,7 @@ impl<'a> BinaryWalkerMut<'a> {
                 let bitmap = read_bitmap_n(self.data, &mut self.pos, self.endianness, *n)?;
                 self.ctx.presence = WalkPresence::Bitmap(bitmap, 0);
             }
-            TypeSpec::Fspec => {
+            TypeSpec::Fspec | TypeSpec::FspecWithMapping(_) => {
                 let mut bytes = Vec::new();
                 loop {
                     if self.pos >= self.data.len() {

@@ -3,22 +3,32 @@
 //! Structure: transport (headers) -> messages -> structs -> base types
 //! Supports: bits, padding, reserved, range values, length/count fields, compounds.
 
-WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
 COMMENT = _{ "//" ~ (!"\n" ~ ANY)* | "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
+WHITESPACE = _{ " " | "\t" | "\n" | "\r" | COMMENT }
 
 // --- Top-level ---
-protocol = { SOI ~ (transport_section)? ~ (message_section)* ~ (struct_section)* ~ EOI }
+// payload: which messages can follow transport and how to select message type from a transport field
+protocol = { SOI ~ (transport_section)? ~ (payload_section)? ~ (message_section)* ~ (struct_section)* ~ EOI }
 
 transport_section = { "transport" ~ "{" ~ transport_field* ~ "}" }
+payload_section   = { "payload" ~ "{" ~ payload_field* ~ "}" }
 message_section   = { "message" ~ ident ~ "{" ~ message_field* ~ "}" }
 struct_section    = { "struct" ~ ident ~ "{" ~ struct_field* ~ "}" }
+
+// Payload: messages that can follow transport; optional selector; optional repeated (list of records per block)
+payload_field = { messages_list | selector_spec | repeated_spec }
+messages_list = { "messages" ~ ":" ~ ident ~ ("," ~ ident)* ~ ";" }
+selector_spec = { "selector" ~ ":" ~ ident ~ "->" ~ (selector_mapping ~ ",")* ~ selector_mapping ~ ";" }
+selector_mapping = { literal ~ ":" ~ ident }
+repeated_spec = { "repeated" ~ ";" }
 
 // --- Transport (frame/header envelope) ---
 transport_field = {
     ident ~ ":" ~ transport_type_spec ~ ("=" ~ literal)? ~ ("[" ~ constraint ~ "]")? ~ ";"
 }
 transport_type_spec = {
-    base_type
+    sized_int_type
+    | base_type
     | padding_type
     | reserved_type
     | bitfield_type
@@ -35,8 +45,10 @@ struct_field = {
 }
 
 // --- Type specifications ---
+// Sized int: integer stored in n bits, e.g. u16(14) or i16(10); use instead of bitfield(n) when value is an integer
 type_spec = {
-    base_type
+    sized_int_type
+    | base_type
     | padding_type
     | reserved_type
     | bitfield_type
@@ -53,12 +65,16 @@ type_spec = {
 
 // ASN.1-style bitmap: n bytes (1, 2, or 4); following optional fields use bits 0,1,2,...
 presence_bits_type = { "presence_bits" ~ "(" ~ num ~ ")" }
-// ASTERIX FSPEC: variable-length bytes until FX=0; 7 presence bits per byte; following optionals use bits 0,1,2,...
-fspec_type = { "fspec" }
+// ASTERIX FSPEC: variable-length bytes until FX=0; 7 presence bits per byte; optional explicit bit->field mapping
+fspec_type = { "fspec" ~ ("->" ~ "(" ~ fspec_mapping_list ~ ")")? }
+fspec_mapping_list = { (fspec_bit_mapping ~ ",")* ~ fspec_bit_mapping }
+fspec_bit_mapping = { num ~ ":" ~ ident }
 // Spare/reserved bits (zero on encode)
 padding_bits_type = { "padding_bits" ~ "(" ~ num ~ ")" }
 
 base_type = { "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | "bool" | "float" | "double" }
+sized_int_type = { int_base ~ "(" ~ num ~ ")" }
+int_base = { "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" }
 
 padding_type   = { "padding" ~ "(" ~ num ~ ")" }
 reserved_type  = { "reserved" ~ "(" ~ num ~ ")" }
@@ -73,7 +89,9 @@ list_type       = { "list" ~ "<" ~ type_spec_inner ~ ">" }
 optional_type   = { "optional" ~ "<" ~ type_spec_inner ~ ">" }
 
 type_spec_inner = {
-    base_type
+    list_type
+    | sized_int_type
+    | base_type
     | padding_type
     | reserved_type
     | bitfield_type
@@ -84,8 +102,10 @@ type_spec_inner = {
 array_len = { ident | num }  // count field name or constant
 
 // --- Constraints (validation) ---
+// Range: one interval [min..max] or concatenation [min1..max1, min2..max2, ...]
 constraint = { range_constraint | enum_constraint }
-range_constraint = { num ~ ".." ~ num }
+interval = { num ~ ".." ~ num }
+range_constraint = { interval ~ ("," ~ interval)* }
 enum_constraint  = { "in" ~ "(" ~ literal ~ ("," ~ literal)* ~ ")" }
 
 // --- Literals ---

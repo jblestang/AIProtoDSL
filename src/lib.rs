@@ -7,6 +7,7 @@
 //! ## DSL structure
 //!
 //! - **Transport**: optional frame/header (magic, version, length, padding, reserved)
+//! - **Payload**: optional; which messages can follow the transport and how to select message type from a transport field (`messages`, `selector`)
 //! - **Messages**: named message types with fields
 //! - **Structs**: reusable compound types
 //!
@@ -14,9 +15,10 @@
 //!
 //! - Base: `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`, `i64`, `bool`, `float`, `double`
 //! - `padding(n)`, `reserved(n)`, `bitfield(n)` (encoder zeroes padding/reserved)
+//! - Sized int: `u8(n)` … `i64(n)` for integers in n bits (e.g. `u16(14)`, `i16(10)`)
 //! - `length_of(field)`, `count_of(field)` for length/count fields
 //! - Struct references, `list<T>`, `optional<T>`, `T[n]` (fixed or count-based)
-//! - Constraints: `[min..max]`, `[in(a, b, c)]`
+//! - Constraints: `[min..max]` or concatenation `[min1..max1, min2..max2, ...]`, `[in(a, b, c)]`
 //!
 //! ## Example DSL
 //!
@@ -46,7 +48,7 @@ pub mod parser;
 pub mod value;
 pub mod walk;
 
-pub use ast::{Protocol, ResolvedProtocol};
+pub use ast::{FspecMapping, Protocol, ResolvedProtocol};
 pub use codec::{Codec, CodecError, Endianness};
 pub use frame::{decode_frame, FrameDecodeResult};
 pub use parser::parse;

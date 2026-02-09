@@ -144,6 +144,7 @@ impl Codec {
     ) -> Result<Value, CodecError> {
         match spec {
             TransportTypeSpec::Base(bt) => self.decode_base(r, bt),
+            TransportTypeSpec::SizedInt(bt, n) => self.decode_sized_int(r, bt, *n),
             TransportTypeSpec::Padding(n) => {
                 let mut buf = vec![0u8; *n as usize];
                 r.read_exact(&mut buf)?;
@@ -190,6 +191,7 @@ impl Codec {
     ) -> Result<(), CodecError> {
         match spec {
             TransportTypeSpec::Base(bt) => self.encode_base(w, bt, v),
+            TransportTypeSpec::SizedInt(bt, n) => self.encode_sized_int(w, bt, *n, v),
             TransportTypeSpec::Padding(n) => {
                 w.write_all(&vec![0u8; *n as usize])?;
                 Ok(())
@@ -284,7 +286,7 @@ impl Codec {
                 i += 1;
                 continue;
             }
-            if let TypeSpec::Fspec = &f.type_spec {
+            if matches!(&f.type_spec, TypeSpec::Fspec | TypeSpec::FspecWithMapping(_)) {
                 let optional_indices = self.collect_following_optionals_message(fields, i + 1, ctx);
                 let fspec_bytes = self.build_fspec_bytes_message(fields, &optional_indices, ctx);
                 w.write_all(&fspec_bytes)?;
@@ -406,6 +408,7 @@ impl Codec {
                 r.read_exact(&mut buf)?;
                 Ok(Value::U64(self.bytes_to_u64(&buf)))
             }
+            TypeSpec::SizedInt(bt, n) => self.decode_sized_int(r, bt, *n),
             TypeSpec::LengthOf(_) => {
                 // Length fields are typically u16/u32 - decode as u32 for generality
                 let v = self.read_u32(r)?;
@@ -426,7 +429,7 @@ impl Codec {
                 ctx.presence = Some(PresenceState::Bitmap { value: bitmap, bit_index: 0 });
                 Ok(Value::U64(bitmap))
             }
-            TypeSpec::Fspec => {
+            TypeSpec::Fspec | TypeSpec::FspecWithMapping(_) => {
                 let mut bytes = Vec::new();
                 loop {
                     let b = r.read_u8()?;
@@ -521,6 +524,7 @@ impl Codec {
                 w.write_all(&buf)?;
                 Ok(())
             }
+            TypeSpec::SizedInt(bt, n) => self.encode_sized_int(w, bt, *n, v),
             TypeSpec::LengthOf(_) => {
                 let val = v.as_u64().unwrap_or(0);
                 self.write_u32(w, val as u32)?;
@@ -531,7 +535,7 @@ impl Codec {
                 self.write_u32(w, val as u32)?;
                 Ok(())
             }
-            TypeSpec::PresenceBits(_) | TypeSpec::Fspec => {
+            TypeSpec::PresenceBits(_) | TypeSpec::Fspec | TypeSpec::FspecWithMapping(_) => {
                 // Written by encode_message_fields / encode_struct when they see this field and look ahead.
                 Ok(())
             }
@@ -640,7 +644,7 @@ impl Codec {
                 i += 1;
                 continue;
             }
-            if let TypeSpec::Fspec = &f.type_spec {
+            if matches!(&f.type_spec, TypeSpec::Fspec | TypeSpec::FspecWithMapping(_)) {
                 let optional_indices = self.collect_following_optionals_struct(&s.fields, i + 1, ctx);
                 let fspec_bytes = self.build_fspec_bytes_struct(&s.fields, &optional_indices, ctx);
                 w.write_all(&fspec_bytes)?;
@@ -733,7 +737,7 @@ impl Codec {
             TypeSpec::Padding(_) | TypeSpec::Reserved(_) | TypeSpec::PaddingBits(_) => Value::Padding,
             TypeSpec::List(_) => Value::List(vec![]),
             TypeSpec::StructRef(_) => Value::Struct(HashMap::new()),
-            TypeSpec::Fspec => Value::Bytes(vec![]),
+            TypeSpec::Fspec | TypeSpec::FspecWithMapping(_) => Value::Bytes(vec![]),
             _ => Value::U64(0),
         }
     }
@@ -744,10 +748,15 @@ impl Codec {
             None => return Ok(()),
         };
         match c {
-            Constraint::Range { min, max } => {
+            Constraint::Range(intervals) => {
                 let n = v.as_i64().ok_or_else(|| CodecError::Validation("expected numeric for range".to_string()))?;
-                if n < *min || n > *max {
-                    return Err(CodecError::Validation(format!("value {} not in range {}..{}", n, min, max)));
+                let in_any = intervals.iter().any(|(min, max)| n >= *min && n <= *max);
+                if !in_any {
+                    return Err(CodecError::Validation(format!(
+                        "value {} not in any interval {:?}",
+                        n,
+                        intervals
+                    )));
                 }
             }
             Constraint::Enum(allowed) => {
@@ -791,6 +800,51 @@ impl Codec {
             BaseType::Float => self.write_f32(w, v.as_f32().unwrap_or(0.0)),
             BaseType::Double => self.write_f64(w, v.as_f64().unwrap_or(0.0)),
         }
+        Ok(())
+    }
+
+    fn decode_sized_int(&self, r: &mut Cursor<&[u8]>, bt: &BaseType, n: u64) -> Result<Value, CodecError> {
+        let bytes = ((n + 7) / 8) as usize;
+        let mut buf = vec![0u8; bytes];
+        r.read_exact(&mut buf)?;
+        let mask = if n >= 64 { u64::MAX } else { (1u64 << n) - 1 };
+        let raw = self.bytes_to_u64(&buf) & mask;
+        let val: i64 = match bt {
+            BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64 if n > 0 => {
+                let sign_bit = 1i64 << (n as i64 - 1);
+                if (raw as i64) >= sign_bit {
+                    (raw as i64) - (1i64 << n as i64)
+                } else {
+                    raw as i64
+                }
+            }
+            _ => raw as i64,
+        };
+        Ok(match bt {
+            BaseType::U8 => Value::U8(val as u8),
+            BaseType::U16 => Value::U16(val as u16),
+            BaseType::U32 => Value::U32(val as u32),
+            BaseType::U64 => Value::U64(val as u64),
+            BaseType::I8 => Value::I8(val as i8),
+            BaseType::I16 => Value::I16(val as i16),
+            BaseType::I32 => Value::I32(val as i32),
+            BaseType::I64 => Value::I64(val),
+            _ => Value::U64(raw),
+        })
+    }
+
+    fn encode_sized_int(&self, w: &mut Vec<u8>, bt: &BaseType, n: u64, v: &Value) -> Result<(), CodecError> {
+        let bytes = ((n + 7) / 8) as usize;
+        let mask = if n >= 64 { u64::MAX } else { (1u64 << n) - 1 };
+        let raw = match bt {
+            BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64 => {
+                let val = v.as_i64().unwrap_or(0);
+                (val as u64) & mask
+            }
+            _ => v.as_u64().unwrap_or(0) & mask,
+        };
+        let buf = self.u64_to_bytes(raw, bytes);
+        w.write_all(&buf)?;
         Ok(())
     }
 

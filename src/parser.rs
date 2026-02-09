@@ -18,12 +18,14 @@ pub fn parse(source: &str) -> Result<Protocol, String> {
 
 fn build_protocol(pair: pest::iterators::Pair<Rule>) -> Result<Protocol, String> {
     let mut transport = None;
+    let mut payload = None;
     let mut messages = Vec::new();
     let mut structs = Vec::new();
 
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::transport_section => transport = Some(build_transport(inner)?),
+            Rule::payload_section => payload = Some(build_payload(inner)?),
             Rule::message_section => messages.push(build_message(inner)?),
             Rule::struct_section => structs.push(build_struct(inner)?),
             _ => {}
@@ -32,8 +34,69 @@ fn build_protocol(pair: pest::iterators::Pair<Rule>) -> Result<Protocol, String>
 
     Ok(Protocol {
         transport,
+        payload,
         messages,
         structs,
+    })
+}
+
+fn build_payload(pair: pest::iterators::Pair<Rule>) -> Result<PayloadSection, String> {
+    let mut messages = Vec::new();
+    let mut selector = None;
+    let mut repeated = false;
+    for payload_field in pair.into_inner() {
+        if payload_field.as_rule() != Rule::payload_field {
+            continue;
+        }
+        let inner = payload_field.into_inner().next().ok_or("empty payload_field")?;
+        match inner.as_rule() {
+            Rule::messages_list => {
+                for part in inner.into_inner() {
+                    if part.as_rule() == Rule::ident {
+                        messages.push(part.as_str().to_string());
+                    } else {
+                        for sub in part.into_inner() {
+                            if sub.as_rule() == Rule::ident {
+                                messages.push(sub.as_str().to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            Rule::selector_spec => selector = Some(build_selector_spec(inner)?),
+            Rule::repeated_spec => repeated = true,
+            _ => {}
+        }
+    }
+    if messages.is_empty() {
+        return Err("payload must list at least one message".to_string());
+    }
+    Ok(PayloadSection { messages, selector, repeated })
+}
+
+fn build_selector_spec(pair: pest::iterators::Pair<Rule>) -> Result<PayloadSelector, String> {
+    let mut inner = pair.into_inner();
+    let transport_field = inner
+        .find(|p| p.as_rule() == Rule::ident)
+        .map(|p| p.as_str().to_string())
+        .ok_or("selector: missing transport field")?;
+    let mut value_to_message = Vec::new();
+    for part in inner {
+        if part.as_rule() == Rule::selector_mapping {
+            let mut it = part.into_inner();
+            let lit_pair = it.next().ok_or("selector mapping: literal")?;
+            let msg_pair = it.next().ok_or("selector mapping: message name")?;
+            let literal = parse_literal(lit_pair.as_str());
+            let message_name = msg_pair.as_str().to_string();
+            value_to_message.push((literal, message_name));
+        }
+    }
+    if value_to_message.is_empty() {
+        return Err("selector must have at least one value: MessageName mapping".to_string());
+    }
+    Ok(PayloadSelector {
+        transport_field,
+        value_to_message,
     })
 }
 
@@ -79,6 +142,13 @@ fn build_transport_type_spec(
     let inner = pair.into_inner().next().ok_or("Empty transport type")?;
     match inner.as_rule() {
         Rule::base_type => Ok(TransportTypeSpec::Base(parse_base_type(inner.as_str())?)),
+        Rule::sized_int_type => {
+            let mut it = inner.into_inner();
+            let base = it.next().ok_or("sized_int base")?;
+            let n = it.next().and_then(|p| p.as_str().parse().ok()).ok_or("sized_int(n) needs number")?;
+            let bt = parse_base_type(base.as_str())?;
+            Ok(TransportTypeSpec::SizedInt(bt, n))
+        }
         Rule::padding_type => {
             let n = inner.into_inner().next().and_then(|p| p.as_str().parse().ok()).ok_or("padding(n) needs number")?;
             Ok(TransportTypeSpec::Padding(n))
@@ -189,6 +259,13 @@ fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String
     let inner = pair.into_inner().next().ok_or("Empty type_spec")?;
     match inner.as_rule() {
         Rule::base_type => Ok(TypeSpec::Base(parse_base_type(inner.as_str())?)),
+        Rule::sized_int_type => {
+            let mut it = inner.into_inner();
+            let base = it.next().ok_or("sized_int base")?;
+            let n = it.next().and_then(|p| p.as_str().parse().ok()).ok_or("sized_int(n) needs number")?;
+            let bt = parse_base_type(base.as_str())?;
+            Ok(TypeSpec::SizedInt(bt, n))
+        }
         Rule::padding_type => {
             let n = inner.into_inner().next().and_then(|p| p.as_str().parse().ok()).ok_or("padding(n)")?;
             Ok(TypeSpec::Padding(n))
@@ -216,7 +293,29 @@ fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String
             }
             Ok(TypeSpec::PresenceBits(n))
         }
-        Rule::fspec_type => Ok(TypeSpec::Fspec),
+        Rule::fspec_type => {
+            let mut inner_iter = inner.into_inner();
+            let mapping = inner_iter
+                .find(|p| p.as_rule() == Rule::fspec_mapping_list)
+                .map(|pair| {
+                    pair.into_inner()
+                        .filter(|p| p.as_rule() == Rule::fspec_bit_mapping)
+                        .map(|p| {
+                            let mut it = p.into_inner();
+                            let num_p = it.next().ok_or("fspec bit mapping")?;
+                            let ident_p = it.next().ok_or("fspec bit mapping")?;
+                            let bit = num_p.as_str().parse::<u32>().map_err(|_| "fspec bit number")?;
+                            let name = ident_p.as_str().to_string();
+                            Ok((bit, name))
+                        })
+                        .collect::<Result<Vec<_>, String>>()
+                })
+                .transpose()?;
+            Ok(match mapping {
+                Some(m) => TypeSpec::FspecWithMapping(m),
+                None => TypeSpec::Fspec,
+            })
+        }
         Rule::padding_bits_type => {
             let n = inner.into_inner().next().and_then(|p| p.as_str().parse().ok()).ok_or("padding_bits(n)")?;
             Ok(TypeSpec::PaddingBits(n))
@@ -253,6 +352,13 @@ fn build_type_spec_inner(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, 
     let inner = pair.into_inner().next().ok_or("Empty type_spec_inner")?;
     match inner.as_rule() {
         Rule::base_type => Ok(TypeSpec::Base(parse_base_type(inner.as_str())?)),
+        Rule::sized_int_type => {
+            let mut it = inner.into_inner();
+            let base = it.next().ok_or("sized_int base")?;
+            let n = it.next().and_then(|p| p.as_str().parse().ok()).ok_or("sized_int(n)")?;
+            let bt = parse_base_type(base.as_str())?;
+            Ok(TypeSpec::SizedInt(bt, n))
+        }
         Rule::padding_type => {
             let n = inner.into_inner().next().and_then(|p| p.as_str().parse().ok()).ok_or("padding")?;
             Ok(TypeSpec::Padding(n))
@@ -270,6 +376,10 @@ fn build_type_spec_inner(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, 
             Ok(TypeSpec::PaddingBits(n))
         }
         Rule::struct_ref_type => Ok(TypeSpec::StructRef(inner.as_str().to_string())),
+        Rule::list_type => {
+            let inner_type = inner.into_inner().next().ok_or("list<T>")?;
+            Ok(TypeSpec::List(Box::new(build_type_spec_inner(inner_type)?)))
+        }
         _ => Err("Invalid inner type".to_string()),
     }
 }
@@ -278,12 +388,21 @@ fn build_constraint(pair: pest::iterators::Pair<Rule>) -> Result<Constraint, Str
     let inner = pair.into_inner().next().ok_or("Empty constraint")?;
     match inner.as_rule() {
         Rule::range_constraint => {
-            let mut nums = inner.into_inner();
-            let min_s = nums.next().ok_or("range min")?.as_str();
-            let max_s = nums.next().ok_or("range max")?.as_str();
-            let min: i64 = min_s.parse().map_err(|_| "range min number")?;
-            let max: i64 = max_s.parse().map_err(|_| "range max number")?;
-            Ok(Constraint::Range { min, max })
+            let mut intervals = Vec::new();
+            for part in inner.into_inner() {
+                if part.as_rule() == Rule::interval {
+                    let mut nums = part.into_inner();
+                    let min_s = nums.next().ok_or("interval min")?.as_str();
+                    let max_s = nums.next().ok_or("interval max")?.as_str();
+                    let min: i64 = min_s.parse().map_err(|_| "interval min number")?;
+                    let max: i64 = max_s.parse().map_err(|_| "interval max number")?;
+                    intervals.push((min, max));
+                }
+            }
+            if intervals.is_empty() {
+                return Err("range constraint must have at least one interval".to_string());
+            }
+            Ok(Constraint::Range(intervals))
         }
         Rule::enum_constraint => {
             let mut literals = Vec::new();

@@ -102,6 +102,32 @@ fn test_validation_constraint() {
 }
 
 #[test]
+fn test_validation_constraint_multiple_intervals() {
+    // Range can be a concatenation of intervals; value valid if in any interval
+    let src = r#"
+message MultiRange {
+  code: u8 [0..2, 10..15, 100..100];
+}
+"#;
+    let protocol = parse(src).expect("parse");
+    let resolved = ResolvedProtocol::resolve(protocol).expect("resolve");
+    let codec = Codec::new(resolved, Endianness::Little);
+
+    for (val, valid) in [(0u8, true), (2, true), (5, false), (10, true), (15, true), (20, false), (100, true)] {
+        let mut values = HashMap::new();
+        values.insert("code".to_string(), Value::U8(val));
+        let encoded = codec.encode_message("MultiRange", &values).expect("encode");
+        let result = codec.decode_message("MultiRange", &encoded);
+        if valid {
+            let decoded = result.expect("decode");
+            assert_eq!(decoded.get("code").and_then(Value::as_u64), Some(val as u64));
+        } else {
+            assert!(result.is_err(), "value {} should fail validation", val);
+        }
+    }
+}
+
+#[test]
 fn test_frame_decode_multiple_messages() {
     let protocol = parse(SIMPLE_PROTO).expect("parse");
     let resolved = ResolvedProtocol::resolve(protocol).expect("resolve");
@@ -331,4 +357,34 @@ fn test_asterix_family_parse() {
     assert!(resolved.get_message("Cat034Record").is_some());
     assert!(resolved.get_message("Cat240Record").is_some());
     assert!(resolved.get_struct("DataSourceId").is_some());
+
+    // Payload: which messages can follow transport and how to select from category
+    let after = resolved.messages_after_transport();
+    assert_eq!(after.len(), 5);
+    assert!(after.contains(&"Cat001Record".to_string()));
+    assert!(after.contains(&"Cat048Record".to_string()));
+
+    let mut transport_values = HashMap::new();
+    transport_values.insert("category".to_string(), Value::U8(48));
+    transport_values.insert("length".to_string(), Value::U16(10));
+    assert_eq!(resolved.message_for_transport_values(&transport_values), Some("Cat048Record"));
+    transport_values.insert("category".to_string(), Value::U8(1));
+    assert_eq!(resolved.message_for_transport_values(&transport_values), Some("Cat001Record"));
+    transport_values.insert("category".to_string(), Value::U8(34));
+    assert_eq!(resolved.message_for_transport_values(&transport_values), Some("Cat034Record"));
+
+    assert!(resolved.payload_repeated(), "ASTERIX payload is a list of records per data block");
+
+    // FSPEC mapping: explicit link between fspec field and the optional fields it governs
+    let fspec = resolved.fspec_mapping_message("Cat048Record").expect("Cat048Record has fspec");
+    assert_eq!(fspec.fspec_field, "fspec");
+    assert!(fspec.optional_fields.len() > 10);
+    assert_eq!(fspec.optional_fields[0], "i048_010");
+    assert_eq!(fspec.optional_fields[1], "i048_020");
+    assert!(fspec.optional_fields.contains(&"i048_161".to_string()));
+    // Explicit bit position -> field mapping
+    assert_eq!(fspec.bit_to_field[0], (0, "i048_010".to_string()));
+    assert_eq!(fspec.bit_to_field[1], (1, "i048_020".to_string()));
+    assert_eq!(fspec.field_for_bit(0), Some("i048_010"));
+    assert_eq!(fspec.bit_for_field("i048_161"), Some(17));
 }

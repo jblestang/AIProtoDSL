@@ -39,6 +39,8 @@ struct Header {
 }
 ```
 
+**Comments:** `//` line comments and `/* */` block comments are allowed anywhere (included after a field). Use e.g. `// content not verifiable (full range)` for fields whose range constraint covers the full type range.
+
 ### Field types
 
 | Type | Description |
@@ -48,7 +50,8 @@ struct Header {
 | `bool`, `float`, `double` | Primitives |
 | `padding(n)` | `n` bytes of padding (zeroed on encode) |
 | `reserved(n)` | `n` reserved bytes (zeroed on encode) |
-| `bitfield(n)` | `n` bits as integer |
+| `bitfield(n)` | `n` bits (bit mask / flags) |
+| `u8(n)` … `i64(n)` | Integer in `n` bits (e.g. `u16(14)`, `i16(10)`); use when the value is an integer, not a bit mask |
 | `length_of(field)` | Value is length of another field |
 | `count_of(field)` | Value is count of another field |
 | `presence_bits(n)` | ASN.1-style bitmap: `n` bytes (1, 2, or 4); following optional fields use bits 0, 1, 2, … |
@@ -61,7 +64,7 @@ struct Header {
 
 ### Constraints
 
-- **Range:** `[min..max]` (e.g. `[0..255]`)
+- **Range:** one interval `[min..max]` (e.g. `[0..255]`) or concatenation of intervals `[min1..max1, min2..max2, ...]` (value valid if in any interval)
 - **Enum:** `[in(0, 1, 2)]`
 
 ### Conditional fields
@@ -82,9 +85,28 @@ message WithPresence {
 
 Encoded as: 1 byte bitmap (bit 0 = `a` present, bit 1 = `b` present), then (if present) `a`, then (if present) `b`. Saves one byte per optional when using the bitmap.
 
+### Payload (messages after transport)
+
+Declare which message types can follow the transport and how to select the message type from a transport field:
+
+```text
+transport {
+  category: u8;
+  length: u16;
+}
+payload {
+  messages: Cat001Record, Cat048Record, Cat034Record;
+  selector: category -> 1: Cat001Record, 48: Cat048Record, 34: Cat034Record;
+}
+```
+
+- **`messages`** — list of message type names that can appear after the transport.
+- **`selector`** — optional: transport field name and value→message mapping. At decode time, decode the transport, then use `ResolvedProtocol::message_for_transport_values(transport_values)` to get the message name; use `messages_after_transport()` to get the allowed set.
+- **`repeated`** — optional: when present, the payload is a **list of records** (zero or more messages of the selected type per data block). Use for protocols like ASTERIX where each data block (category + length) contains multiple records of the same category.
+
 ### ASTERIX FSPEC and family example
 
-Use `fspec` for ASTERIX-style records: variable-length FSPEC bytes (7 presence bits per byte, bit 7 = FX extension). The next consecutive optional fields use bits 0, 1, 2, … from the FSPEC. See **`examples/asterix_family.dsl`** for a model of the ASTERIX CAT 001, 002, 034, 048, and 240 family (data block = category + length; record = fspec + optional data items).
+Use `fspec` for ASTERIX-style records: variable-length FSPEC bytes (7 presence bits per byte, bit 7 = FX extension). The next consecutive optional fields use bits 0, 1, 2, … from the FSPEC. **Mapping:** after resolve, use `ResolvedProtocol::fspec_mapping_message(name)` (or `fspec_mapping_struct(name)`) to get the explicit mapping: the FSPEC field name, the list of optional field names in bit order, and **`bit_to_field: Vec<(u32, String)>`** (FSPEC bit position → field name). Use **`field_for_bit(bit)`** and **`bit_for_field(field_name)`** on `FspecMapping` for lookups. See **`examples/asterix_family.dsl`** for a model of the ASTERIX CAT 001, 002, 034, 048, and 240 family (data block = category + length; **payload is a list of records** per block, with `repeated;` and selector mapping `category` to record type).
 
 ## Codec
 
