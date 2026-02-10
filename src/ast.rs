@@ -156,6 +156,8 @@ pub enum TypeSpec {
     StructRef(String),
     Array(Box<TypeSpec>, ArrayLen),
     List(Box<TypeSpec>),
+    /// List preceded by a 1-byte repetition factor (REP) - common in ASTERIX.
+    RepList(Box<TypeSpec>),
     Optional(Box<TypeSpec>),
 }
 

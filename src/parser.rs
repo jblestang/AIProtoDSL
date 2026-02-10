@@ -444,6 +444,10 @@ fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String
             let inner_type = inner.into_inner().next().ok_or("list<T>")?;
             Ok(TypeSpec::List(Box::new(build_type_spec_inner(inner_type)?)))
         }
+        Rule::rep_list_type => {
+            let inner_type = inner.into_inner().next().ok_or("rep_list<T>")?;
+            Ok(TypeSpec::RepList(Box::new(build_type_spec_inner(inner_type)?)))
+        }
         Rule::optional_type => {
             let inner_type = inner.into_inner().next().ok_or("optional<T>")?;
             Ok(TypeSpec::Optional(Box::new(build_type_spec_inner(inner_type)?)))
@@ -483,6 +487,10 @@ fn build_type_spec_inner(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, 
         Rule::list_type => {
             let inner_type = inner.into_inner().next().ok_or("list<T>")?;
             Ok(TypeSpec::List(Box::new(build_type_spec_inner(inner_type)?)))
+        }
+        Rule::rep_list_type => {
+            let inner_type = inner.into_inner().next().ok_or("rep_list<T>")?;
+            Ok(TypeSpec::RepList(Box::new(build_type_spec_inner(inner_type)?)))
         }
         _ => Err("Invalid inner type".to_string()),
     }

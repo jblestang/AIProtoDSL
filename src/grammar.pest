@@ -66,6 +66,7 @@ type_spec = {
     | fspec_type
     | padding_bits_type
     | list_type
+    | rep_list_type
     | optional_type
     | array_type
     | struct_ref_type
@@ -91,10 +92,12 @@ count_of_type  = { "count_of" ~ "(" ~ ident ~ ")" }
 struct_ref_type = { ident }
 array_type      = { type_spec_inner ~ "[" ~ array_len ~ "]" }
 list_type       = { "list" ~ "<" ~ type_spec_inner ~ ">" }
+rep_list_type   = { "rep_list" ~ "<" ~ type_spec_inner ~ ">" }
 optional_type   = { "optional" ~ "<" ~ type_spec_inner ~ ">" }
 
 type_spec_inner = {
     list_type
+    | rep_list_type
     | sized_int_type
     | base_type
     | padding_type

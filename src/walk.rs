@@ -353,6 +353,16 @@ impl<'a> BinaryWalker<'a> {
                     self.skip_type_spec(elem, None)?;
                 }
             }
+            TypeSpec::RepList(elem) => {
+                if self.pos + 1 > self.data.len() {
+                    return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                }
+                let n = self.data[self.pos] as u32;
+                self.pos += 1;
+                for _ in 0..n {
+                    self.skip_type_spec(elem, None)?;
+                }
+            }
             TypeSpec::Optional(elem) => {
                 let present = match &mut self.ctx.presence {
                     WalkPresence::Bitmap(bitmap, i) => {
@@ -516,6 +526,16 @@ impl<'a> BinaryWalkerMut<'a> {
                     self.zero_or_skip_type_spec(elem, None)?;
                 }
             }
+            TypeSpec::RepList(elem) => {
+                if self.pos + 1 > self.data.len() {
+                    return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                }
+                let n = self.data[self.pos] as usize;
+                self.pos += 1;
+                for _ in 0..n {
+                    self.zero_or_skip_type_spec(elem, None)?;
+                }
+            }
             TypeSpec::Optional(elem) => {
                 let present = match &mut self.ctx.presence {
                     WalkPresence::Bitmap(bitmap, i) => {
@@ -615,6 +635,16 @@ impl<'a> BinaryWalkerMut<'a> {
                 }
                 let n = read_u32_slice(self.data, self.pos, self.endianness)?;
                 self.pos += 4;
+                for _ in 0..n {
+                    self.skip_type_spec(elem, None)?;
+                }
+            }
+            TypeSpec::RepList(elem) => {
+                if self.pos + 1 > self.data.len() {
+                    return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                }
+                let n = self.data[self.pos] as u32;
+                self.pos += 1;
                 for _ in 0..n {
                     self.skip_type_spec(elem, None)?;
                 }

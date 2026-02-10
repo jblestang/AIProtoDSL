@@ -228,6 +228,9 @@ impl Codec {
         fields: &[MessageField],
         ctx: &mut DecodeContext,
     ) -> Result<HashMap<String, Value>, CodecError> {
+        // Bit packing is local to a message: reset bit cursor for this scope.
+        let saved_bits = ctx.bit_read;
+        ctx.bit_read = BitReadState::default();
         let mut out = HashMap::new();
         for f in fields {
             if let Some(ref cond) = f.condition {
@@ -237,10 +240,19 @@ impl Codec {
                     continue;
                 }
             }
-            let v = self.decode_type_spec(r, &f.type_spec, &self.resolved.protocol.structs, ctx)?;
+            let v = self
+                .decode_type_spec(r, &f.type_spec, &self.resolved.protocol.structs, ctx)
+                .map_err(|e| CodecError::Validation(format!("field {}: {}", f.name, e)))?;
             ctx.set(f.name.clone(), v.clone());
             out.insert(f.name.clone(), v);
         }
+        if !ctx.bit_read.is_aligned() {
+            ctx.bit_read = saved_bits;
+            return Err(CodecError::Validation(
+                "message: bitfield/padding_bits not byte-aligned at end".to_string(),
+            ));
+        }
+        ctx.bit_read = saved_bits;
         Ok(out)
     }
 
@@ -250,6 +262,9 @@ impl Codec {
         fields: &[MessageField],
         ctx: &mut EncodeContext,
     ) -> Result<(), CodecError> {
+        // Bit packing is local to a message: reset bit cursor for this scope.
+        let saved_bits = ctx.bit_write;
+        ctx.bit_write = BitWriteState::default();
         let structs = &self.resolved.protocol.structs;
         let mut skip_count = 0usize;
         let mut i = 0;
@@ -308,6 +323,13 @@ impl Codec {
             self.encode_type_spec(w, &f.type_spec, &v, structs, ctx)?;
             i += 1;
         }
+        if !ctx.bit_write.is_aligned() {
+            ctx.bit_write = saved_bits;
+            return Err(CodecError::Validation(
+                "message: bitfield/padding_bits not byte-aligned at end".to_string(),
+            ));
+        }
+        ctx.bit_write = saved_bits;
         Ok(())
     }
 
@@ -383,6 +405,68 @@ impl Codec {
         Ok(())
     }
 
+    fn ensure_decode_bit_aligned(&self, ctx: &DecodeContext) -> Result<(), CodecError> {
+        if ctx.bit_read.is_aligned() {
+            Ok(())
+        } else {
+            Err(CodecError::Validation(
+                "bitfield/padding_bits not byte-aligned (missing padding_bits?)".to_string(),
+            ))
+        }
+    }
+
+    fn ensure_encode_bit_aligned(&self, ctx: &EncodeContext) -> Result<(), CodecError> {
+        if ctx.bit_write.is_aligned() {
+            Ok(())
+        } else {
+            Err(CodecError::Validation(
+                "bitfield/padding_bits not byte-aligned (missing padding_bits?)".to_string(),
+            ))
+        }
+    }
+
+    fn read_bits(&self, r: &mut Cursor<&[u8]>, ctx: &mut DecodeContext, n: u64) -> Result<u64, CodecError> {
+        if n > 64 {
+            return Err(CodecError::Validation(format!("bitfield({}): too many bits (max 64)", n)));
+        }
+        let mut out = 0u64;
+        for i in 0..(n as u8) {
+            if ctx.bit_read.next_bit == 8 {
+                ctx.bit_read.cur = r.read_u8()?;
+                ctx.bit_read.next_bit = 0;
+            }
+            let bit = (ctx.bit_read.cur >> ctx.bit_read.next_bit) & 1;
+            if bit != 0 {
+                out |= 1u64 << i;
+            }
+            ctx.bit_read.next_bit += 1;
+            if ctx.bit_read.next_bit == 8 {
+                ctx.bit_read.next_bit = 8;
+            }
+        }
+        Ok(out)
+    }
+
+    fn write_bits(&self, w: &mut Vec<u8>, ctx: &mut EncodeContext, n: u64, mut value: u64) -> Result<(), CodecError> {
+        if n > 64 {
+            return Err(CodecError::Validation(format!("bitfield({}): too many bits (max 64)", n)));
+        }
+        for _ in 0..n {
+            let bit = (value & 1) as u8;
+            value >>= 1;
+            if bit != 0 {
+                ctx.bit_write.cur |= 1u8 << ctx.bit_write.next_bit;
+            }
+            ctx.bit_write.next_bit += 1;
+            if ctx.bit_write.next_bit == 8 {
+                w.write_all(&[ctx.bit_write.cur])?;
+                ctx.bit_write.cur = 0;
+                ctx.bit_write.next_bit = 0;
+            }
+        }
+        Ok(())
+    }
+
     fn decode_type_spec(
         &self,
         r: &mut Cursor<&[u8]>,
@@ -391,34 +475,71 @@ impl Codec {
         ctx: &mut DecodeContext,
     ) -> Result<Value, CodecError> {
         match spec {
-            TypeSpec::Base(bt) => self.decode_base(r, bt),
+            TypeSpec::Base(bt) => {
+                self.ensure_decode_bit_aligned(ctx)?;
+                self.decode_base(r, bt)
+            }
             TypeSpec::Padding(n) => {
+                self.ensure_decode_bit_aligned(ctx)?;
                 let mut buf = vec![0u8; *n as usize];
                 r.read_exact(&mut buf)?;
                 Ok(Value::Padding)
             }
             TypeSpec::Reserved(n) => {
+                self.ensure_decode_bit_aligned(ctx)?;
                 let mut buf = vec![0u8; *n as usize];
                 r.read_exact(&mut buf)?;
                 Ok(Value::Reserved)
             }
             TypeSpec::Bitfield(n) => {
-                let bits = (*n + 7) / 8;
-                let mut buf = vec![0u8; bits as usize];
-                r.read_exact(&mut buf)?;
-                Ok(Value::U64(self.bytes_to_u64(&buf)))
+                let v = self.read_bits(r, ctx, *n)?;
+                Ok(Value::U64(v))
             }
-            TypeSpec::SizedInt(bt, n) => self.decode_sized_int(r, bt, *n),
+            TypeSpec::SizedInt(bt, n) => {
+                if ctx.bit_read.is_aligned() {
+                    self.decode_sized_int(r, bt, *n)
+                } else {
+                    let raw = self.read_bits(r, ctx, *n)?;
+                    // Reuse the sign-extension and base-type casting rules of decode_sized_int.
+                    let mask = if *n >= 64 { u64::MAX } else { (1u64 << *n) - 1 };
+                    let raw = raw & mask;
+                    let val: i64 = match bt {
+                        BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64 if *n > 0 => {
+                            let sign_bit = 1i64 << (*n as i64 - 1);
+                            if (raw as i64) >= sign_bit {
+                                (raw as i64) - (1i64 << *n as i64)
+                            } else {
+                                raw as i64
+                            }
+                        }
+                        _ => raw as i64,
+                    };
+                    Ok(match bt {
+                        BaseType::U8 => Value::U8(val as u8),
+                        BaseType::U16 => Value::U16(val as u16),
+                        BaseType::U32 => Value::U32(val as u32),
+                        BaseType::U64 => Value::U64(val as u64),
+                        BaseType::I8 => Value::I8(val as i8),
+                        BaseType::I16 => Value::I16(val as i16),
+                        BaseType::I32 => Value::I32(val as i32),
+                        BaseType::I64 => Value::I64(val),
+                        _ => Value::U64(raw),
+                    })
+                }
+            }
             TypeSpec::LengthOf(_) => {
+                self.ensure_decode_bit_aligned(ctx)?;
                 // Length fields are typically u16/u32 - decode as u32 for generality
                 let v = self.read_u32(r)?;
                 Ok(Value::U32(v))
             }
             TypeSpec::CountOf(_) => {
+                self.ensure_decode_bit_aligned(ctx)?;
                 let v = self.read_u32(r)?;
                 Ok(Value::U32(v))
             }
             TypeSpec::PresenceBits(n) => {
+                self.ensure_decode_bit_aligned(ctx)?;
                 let bytes = *n as usize;
                 let bitmap = match bytes {
                     1 => r.read_u8()? as u64,
@@ -430,6 +551,7 @@ impl Codec {
                 Ok(Value::U64(bitmap))
             }
             TypeSpec::Fspec | TypeSpec::FspecWithMapping(_) => {
+                self.ensure_decode_bit_aligned(ctx)?;
                 let mut bytes = Vec::new();
                 loop {
                     let b = r.read_u8()?;
@@ -442,16 +564,17 @@ impl Codec {
                 Ok(Value::Bytes(bytes))
             }
             TypeSpec::PaddingBits(n) => {
-                let byte_len = ((*n + 7) / 8) as usize;
-                let mut buf = vec![0u8; byte_len];
-                r.read_exact(&mut buf)?;
+                // Padding/spare bits: consume bits, ignore value (real-world captures may set FX/extension bits).
+                let _ = self.read_bits(r, ctx, *n)?;
                 Ok(Value::Padding)
             }
             TypeSpec::StructRef(name) => {
+                self.ensure_decode_bit_aligned(ctx)?;
                 let s = self.resolved.get_struct(name).ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
                 self.decode_struct(r, s, structs, ctx)
             }
             TypeSpec::Array(elem, len) => {
+                self.ensure_decode_bit_aligned(ctx)?;
                 let n = match len {
                     ArrayLen::Constant(k) => *k,
                     ArrayLen::FieldRef(field) => ctx.get(field).and_then(Value::as_u64).ok_or_else(|| CodecError::UnknownField(field.clone()))?,
@@ -463,6 +586,7 @@ impl Codec {
                 Ok(Value::List(list))
             }
             TypeSpec::List(elem) => {
+                self.ensure_decode_bit_aligned(ctx)?;
                 let n = self.read_u32(r)?;
                 let mut list = Vec::with_capacity(n as usize);
                 for _ in 0..n {
@@ -470,7 +594,20 @@ impl Codec {
                 }
                 Ok(Value::List(list))
             }
+            TypeSpec::RepList(elem) => {
+                self.ensure_decode_bit_aligned(ctx)?;
+                let n = self.read_u8(r)? as u64;
+                let mut list = Vec::with_capacity(n as usize);
+                for i in 0..n {
+                    let v = self
+                        .decode_type_spec(r, elem, structs, ctx)
+                        .map_err(|e| CodecError::Validation(format!("rep_list item {}/{}: {}", i + 1, n, e)))?;
+                    list.push(v);
+                }
+                Ok(Value::List(list))
+            }
             TypeSpec::Optional(elem) => {
+                self.ensure_decode_bit_aligned(ctx)?;
                 let present = if let Some(ref mut pre) = ctx.presence {
                     match pre {
                         PresenceState::Bitmap { value, bit_index } => {
@@ -508,29 +645,46 @@ impl Codec {
         ctx: &mut EncodeContext,
     ) -> Result<(), CodecError> {
         match spec {
-            TypeSpec::Base(bt) => self.encode_base(w, bt, v),
+            TypeSpec::Base(bt) => {
+                self.ensure_encode_bit_aligned(ctx)?;
+                self.encode_base(w, bt, v)
+            }
             TypeSpec::Padding(n) => {
+                self.ensure_encode_bit_aligned(ctx)?;
                 w.write_all(&vec![0u8; *n as usize])?;
                 Ok(())
             }
             TypeSpec::Reserved(n) => {
+                self.ensure_encode_bit_aligned(ctx)?;
                 w.write_all(&vec![0u8; *n as usize])?;
                 Ok(())
             }
             TypeSpec::Bitfield(n) => {
-                let bits = (*n + 7) / 8;
                 let val = v.as_u64().unwrap_or(0);
-                let buf = self.u64_to_bytes(val, bits as usize);
-                w.write_all(&buf)?;
-                Ok(())
+                self.write_bits(w, ctx, *n, val)
             }
-            TypeSpec::SizedInt(bt, n) => self.encode_sized_int(w, bt, *n, v),
+            TypeSpec::SizedInt(bt, n) => {
+                if ctx.bit_write.is_aligned() {
+                    self.encode_sized_int(w, bt, *n, v)
+                } else {
+                    let mask = if *n >= 64 { u64::MAX } else { (1u64 << *n) - 1 };
+                    let raw = match bt {
+                        BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64 => {
+                            (v.as_i64().unwrap_or(0) as u64) & mask
+                        }
+                        _ => v.as_u64().unwrap_or(0) & mask,
+                    };
+                    self.write_bits(w, ctx, *n, raw)
+                }
+            }
             TypeSpec::LengthOf(_) => {
+                self.ensure_encode_bit_aligned(ctx)?;
                 let val = v.as_u64().unwrap_or(0);
                 self.write_u32(w, val as u32)?;
                 Ok(())
             }
             TypeSpec::CountOf(_) => {
+                self.ensure_encode_bit_aligned(ctx)?;
                 let val = v.as_u64().unwrap_or(0);
                 self.write_u32(w, val as u32)?;
                 Ok(())
@@ -540,11 +694,10 @@ impl Codec {
                 Ok(())
             }
             TypeSpec::PaddingBits(n) => {
-                let byte_len = ((*n + 7) / 8) as usize;
-                w.write_all(&vec![0u8; byte_len])?;
-                Ok(())
+                self.write_bits(w, ctx, *n, 0)
             }
             TypeSpec::StructRef(name) => {
+                self.ensure_encode_bit_aligned(ctx)?;
                 let s = self.resolved.get_struct(name).ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
                 let m = v.as_struct().cloned().unwrap_or_default();
                 let mut sub = EncodeContext::from_values(&m);
@@ -552,6 +705,7 @@ impl Codec {
                 Ok(())
             }
             TypeSpec::Array(elem, _len) => {
+                self.ensure_encode_bit_aligned(ctx)?;
                 let list = v.as_list().map(|s| s.to_vec()).unwrap_or_default();
                 for item in list {
                     self.encode_type_spec(w, elem, &item, structs, ctx)?;
@@ -559,6 +713,7 @@ impl Codec {
                 Ok(())
             }
             TypeSpec::List(elem) => {
+                self.ensure_encode_bit_aligned(ctx)?;
                 let list = v.as_list().map(|s| s.to_vec()).unwrap_or_default();
                 self.write_u32(w, list.len() as u32)?;
                 for item in list {
@@ -566,7 +721,18 @@ impl Codec {
                 }
                 Ok(())
             }
+            TypeSpec::RepList(elem) => {
+                self.ensure_encode_bit_aligned(ctx)?;
+                let list = v.as_list().map(|s| s.to_vec()).unwrap_or_default();
+                let n = list.len().min(255);
+                self.write_u8(w, n as u8)?;
+                for item in list.into_iter().take(n) {
+                    self.encode_type_spec(w, elem, &item, structs, ctx)?;
+                }
+                Ok(())
+            }
             TypeSpec::Optional(elem) => {
+                self.ensure_encode_bit_aligned(ctx)?;
                 if v.as_list().map(|s| s.is_empty()).unwrap_or(true) {
                     self.write_u8(w, 0)?;
                 } else {
@@ -585,6 +751,9 @@ impl Codec {
         structs: &[StructSection],
         ctx: &mut DecodeContext,
     ) -> Result<Value, CodecError> {
+        // Bit packing is local to a struct: reset bit cursor for this scope.
+        let saved_bits = ctx.bit_read;
+        ctx.bit_read = BitReadState::default();
         let mut out = HashMap::new();
         for f in &s.fields {
             if let Some(ref cond) = f.condition {
@@ -594,11 +763,22 @@ impl Codec {
                     continue;
                 }
             }
-            let v = self.decode_type_spec(r, &f.type_spec, structs, ctx)?;
+            let v = self
+                .decode_type_spec(r, &f.type_spec, structs, ctx)
+                .map_err(|e| CodecError::Validation(format!("{}.{}: {}", s.name, f.name, e)))?;
             self.validate_constraint(&v, f.constraint.as_ref())?;
             ctx.set(f.name.clone(), v.clone());
             out.insert(f.name.clone(), v);
         }
+        // Ensure the struct ends on a byte boundary (padding_bits should make it so).
+        if !ctx.bit_read.is_aligned() {
+            ctx.bit_read = saved_bits;
+            return Err(CodecError::Validation(format!(
+                "struct {}: bitfield/padding_bits not byte-aligned at end",
+                s.name
+            )));
+        }
+        ctx.bit_read = saved_bits;
         Ok(Value::Struct(out))
     }
 
@@ -609,6 +789,9 @@ impl Codec {
         structs: &[StructSection],
         ctx: &mut EncodeContext,
     ) -> Result<(), CodecError> {
+        // Bit packing is local to a struct: reset bit cursor for this scope.
+        let saved_bits = ctx.bit_write;
+        ctx.bit_write = BitWriteState::default();
         let mut skip_count = 0usize;
         let mut i = 0;
         while i < s.fields.len() {
@@ -666,6 +849,14 @@ impl Codec {
             self.encode_type_spec(w, &f.type_spec, &v, structs, ctx)?;
             i += 1;
         }
+        if !ctx.bit_write.is_aligned() {
+            ctx.bit_write = saved_bits;
+            return Err(CodecError::Validation(format!(
+                "struct {}: bitfield/padding_bits not byte-aligned at end",
+                s.name
+            )));
+        }
+        ctx.bit_write = saved_bits;
         Ok(())
     }
 
@@ -1028,11 +1219,53 @@ enum PresenceState {
     Fspec { bytes: Vec<u8>, bit_index: usize },
 }
 
+/// Bit-level packing state for decoding (`bitfield(n)` / `padding_bits(n)`).
+/// Bits are consumed LSB-first within each byte (bit 0 = least significant bit),
+/// consistent with the FSPEC bit numbering used elsewhere in this crate.
+#[derive(Clone, Copy, Debug)]
+struct BitReadState {
+    cur: u8,
+    next_bit: u8, // 0..=8, where 8 means "need new byte"
+}
+
+impl Default for BitReadState {
+    fn default() -> Self {
+        BitReadState { cur: 0, next_bit: 8 }
+    }
+}
+
+impl BitReadState {
+    fn is_aligned(&self) -> bool {
+        self.next_bit == 8
+    }
+}
+
+/// Bit-level packing state for encoding (`bitfield(n)` / `padding_bits(n)`).
+/// Bits are written LSB-first within each byte.
+#[derive(Clone, Copy, Debug)]
+struct BitWriteState {
+    cur: u8,
+    next_bit: u8, // 0..=8, where 0 means "byte boundary / empty"
+}
+
+impl Default for BitWriteState {
+    fn default() -> Self {
+        BitWriteState { cur: 0, next_bit: 0 }
+    }
+}
+
+impl BitWriteState {
+    fn is_aligned(&self) -> bool {
+        self.next_bit == 0
+    }
+}
+
 #[derive(Default)]
 struct DecodeContext {
     values: HashMap<String, Value>,
     /// When decoding: after presence_bits(n) or fspec, following optionals use bits from this.
     presence: Option<PresenceState>,
+    bit_read: BitReadState,
 }
 
 impl DecodeContext {
@@ -1046,11 +1279,12 @@ impl DecodeContext {
 
 struct EncodeContext {
     values: HashMap<String, Value>,
+    bit_write: BitWriteState,
 }
 
 impl EncodeContext {
     fn from_values(m: &HashMap<String, Value>) -> Self {
-        EncodeContext { values: m.clone() }
+        EncodeContext { values: m.clone(), bit_write: BitWriteState::default() }
     }
     fn get(&self, k: &str) -> Option<&Value> {
         self.values.get(k)

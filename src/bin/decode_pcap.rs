@@ -1,0 +1,399 @@
+use aiprotodsl::frame::decode_frame;
+use aiprotodsl::{parse, Codec, Endianness, ResolvedProtocol};
+use pcap_parser::pcapng::Block as PcapNgBlock;
+use pcap_parser::traits::{PcapNGPacketBlock, PcapReaderIterator};
+use pcap_parser::{Linktype, PcapBlockOwned, PcapError};
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::Read;
+use std::path::PathBuf;
+ 
+fn main() -> anyhow::Result<()> {
+    let mut raw_args: Vec<String> = std::env::args().skip(1).collect();
+    let verbose = if let Some(pos) = raw_args.iter().position(|a| a == "--verbose" || a == "-v") {
+        raw_args.remove(pos);
+        true
+    } else {
+        false
+    };
+    let mut args = raw_args.into_iter();
+    let pcap_path: PathBuf = args.next().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("assets/asterix.pcap"));
+    let dsl_path: PathBuf = args.next().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("examples/asterix_family.dsl"));
+ 
+    let src = std::fs::read_to_string(&dsl_path)?;
+    let protocol = parse(&src).map_err(|e| anyhow::anyhow!(e))?;
+    let resolved = ResolvedProtocol::resolve(protocol).map_err(|e| anyhow::anyhow!(e))?;
+    let codec = Codec::new(resolved.clone(), Endianness::Big);
+ 
+    let mut pkt_count: u64 = 0;
+    let mut udp_count: u64 = 0;
+    let mut block_count: u64 = 0;
+    let mut decoded_records: u64 = 0;
+    let mut removed_records: u64 = 0;
+    let mut unknown_categories: HashMap<u8, u64> = HashMap::new();
+    let mut known_categories: HashMap<u8, (u64, u64, u64)> = HashMap::new(); // cat -> (blocks, decoded, removed)
+    let mut first_errors: HashMap<u8, String> = HashMap::new();
+
+    // Probe file type (pcap vs pcapng) using the magic at start of file.
+    let mut probe = [0u8; 4];
+    {
+        let mut f = File::open(&pcap_path)?;
+        f.read_exact(&mut probe)?;
+    }
+    let is_pcapng = probe == [0x0a, 0x0d, 0x0d, 0x0a];
+    if is_pcapng {
+        let file = File::open(&pcap_path)?;
+        run_pcapng(
+            file,
+            &codec,
+            &resolved,
+            verbose,
+            &mut pkt_count,
+            &mut udp_count,
+            &mut block_count,
+            &mut decoded_records,
+            &mut removed_records,
+            &mut unknown_categories,
+            &mut known_categories,
+            &mut first_errors,
+        )?;
+    } else {
+        let file = File::open(&pcap_path)?;
+        run_legacy_pcap(
+            file,
+            &codec,
+            &resolved,
+            verbose,
+            &mut pkt_count,
+            &mut udp_count,
+            &mut block_count,
+            &mut decoded_records,
+            &mut removed_records,
+            &mut unknown_categories,
+            &mut known_categories,
+            &mut first_errors,
+        )?;
+    }
+ 
+    eprintln!("pcap: {}", pcap_path.display());
+    eprintln!("dsl:  {}", dsl_path.display());
+    eprintln!("packets: {}", pkt_count);
+    eprintln!("udp payloads: {}", udp_count);
+    eprintln!("asterix blocks (from length field): {}", block_count);
+    eprintln!("decoded records: {}", decoded_records);
+    eprintln!("removed (validation/decoding errors): {}", removed_records);
+    if !known_categories.is_empty() {
+        let mut cats: Vec<_> = known_categories.into_iter().collect();
+        cats.sort_by_key(|(c, _)| *c);
+        eprintln!("known categories summary:");
+        for (cat, (blocks, decoded, removed)) in cats {
+            eprintln!("  CAT{:03}: blocks={}, decoded={}, removed={}", cat, blocks, decoded, removed);
+            if let Some(err) = first_errors.get(&cat) {
+                eprintln!("    first error: {}", err);
+            }
+        }
+    }
+    if !unknown_categories.is_empty() {
+        let mut cats: Vec<_> = unknown_categories.into_iter().collect();
+        cats.sort_by_key(|(c, _)| *c);
+        eprintln!("unknown categories (skipped):");
+        for (cat, n) in cats {
+            eprintln!("  CAT{:03}: {}", cat, n);
+        }
+    }
+ 
+    Ok(())
+}
+
+fn run_legacy_pcap<R: Read>(
+    file: R,
+    codec: &Codec,
+    resolved: &ResolvedProtocol,
+    verbose: bool,
+    pkt_count: &mut u64,
+    udp_count: &mut u64,
+    block_count: &mut u64,
+    decoded_records: &mut u64,
+    removed_records: &mut u64,
+    unknown_categories: &mut HashMap<u8, u64>,
+    known_categories: &mut HashMap<u8, (u64, u64, u64)>,
+    first_errors: &mut HashMap<u8, String>,
+) -> anyhow::Result<()> {
+    let mut reader = pcap_parser::pcap::LegacyPcapReader::new(1 << 20, file)?;
+    let mut linktype: Option<Linktype> = None;
+    loop {
+        match reader.next() {
+            Ok((offset, block)) => {
+                match block {
+                    PcapBlockOwned::LegacyHeader(h) => linktype = Some(h.network),
+                    PcapBlockOwned::Legacy(b) => {
+                        *pkt_count += 1;
+                        let lt = linktype.unwrap_or(Linktype(1));
+                        if let Some(udp_payload) = udp_payload_from_linktype(lt, b.data) {
+                            *udp_count += 1;
+                            process_udp_payload(
+                                codec,
+                                resolved,
+                                udp_payload,
+                                verbose,
+                                block_count,
+                                decoded_records,
+                                removed_records,
+                                unknown_categories,
+                                known_categories,
+                                first_errors,
+                            );
+                        }
+                    }
+                    PcapBlockOwned::NG(_) => {}
+                }
+                reader.consume(offset);
+            }
+            Err(PcapError::Eof) => break,
+            Err(PcapError::Incomplete(_)) => {
+                reader
+                    .refill()
+                    .map_err(|e| anyhow::anyhow!("pcap refill error: {:?}", e))?;
+            }
+            Err(e) => return Err(anyhow::anyhow!("pcap read error: {:?}", e)),
+        }
+    }
+    Ok(())
+}
+
+fn run_pcapng<R: Read>(
+    file: R,
+    codec: &Codec,
+    resolved: &ResolvedProtocol,
+    verbose: bool,
+    pkt_count: &mut u64,
+    udp_count: &mut u64,
+    block_count: &mut u64,
+    decoded_records: &mut u64,
+    removed_records: &mut u64,
+    unknown_categories: &mut HashMap<u8, u64>,
+    known_categories: &mut HashMap<u8, (u64, u64, u64)>,
+    first_errors: &mut HashMap<u8, String>,
+) -> anyhow::Result<()> {
+    let mut reader = pcap_parser::pcapng::PcapNGReader::new(1 << 20, file)?;
+    let mut if_linktypes: Vec<Linktype> = Vec::new();
+    loop {
+        match reader.next() {
+            Ok((offset, block)) => {
+                if let PcapBlockOwned::NG(b) = block {
+                    match &b {
+                        PcapNgBlock::InterfaceDescription(idb) => if_linktypes.push(idb.linktype),
+                        PcapNgBlock::EnhancedPacket(epb) => {
+                            *pkt_count += 1;
+                            let lt = if_linktypes.get(epb.if_id as usize).copied().unwrap_or(Linktype(1));
+                            let frame = epb.packet_data();
+                            if let Some(udp_payload) = udp_payload_from_linktype(lt, frame) {
+                                *udp_count += 1;
+                                process_udp_payload(
+                                    codec,
+                                    resolved,
+                                    udp_payload,
+                                    verbose,
+                                    block_count,
+                                    decoded_records,
+                                    removed_records,
+                                    unknown_categories,
+                                    known_categories,
+                                    first_errors,
+                                );
+                            }
+                        }
+                        PcapNgBlock::SimplePacket(spb) => {
+                            *pkt_count += 1;
+                            let lt = if_linktypes.first().copied().unwrap_or(Linktype(1));
+                            let frame = spb.packet_data();
+                            if let Some(udp_payload) = udp_payload_from_linktype(lt, frame) {
+                                *udp_count += 1;
+                                process_udp_payload(
+                                    codec,
+                                    resolved,
+                                    udp_payload,
+                                    verbose,
+                                    block_count,
+                                    decoded_records,
+                                    removed_records,
+                                    unknown_categories,
+                                    known_categories,
+                                    first_errors,
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                reader.consume(offset);
+            }
+            Err(PcapError::Eof) => break,
+            Err(PcapError::Incomplete(_)) => {
+                reader
+                    .refill()
+                    .map_err(|e| anyhow::anyhow!("pcapng refill error: {:?}", e))?;
+            }
+            Err(e) => return Err(anyhow::anyhow!("pcapng read error: {:?}", e)),
+        }
+    }
+    Ok(())
+}
+ 
+fn process_udp_payload(
+    codec: &Codec,
+    resolved: &ResolvedProtocol,
+    udp_payload: &[u8],
+    verbose: bool,
+    block_count: &mut u64,
+    decoded_records: &mut u64,
+    removed_records: &mut u64,
+    unknown_categories: &mut HashMap<u8, u64>,
+    known_categories: &mut HashMap<u8, (u64, u64, u64)>,
+    first_errors: &mut HashMap<u8, String>,
+) {
+    // UDP payload may contain multiple ASTERIX data blocks.
+    let mut off = 0usize;
+    let mut any_block = false;
+    while off + 3 <= udp_payload.len() {
+        let cat = udp_payload[off];
+        let len = u16::from_be_bytes([udp_payload[off + 1], udp_payload[off + 2]]) as usize;
+        if len < 3 {
+            break;
+        }
+        if off + len > udp_payload.len() {
+            break;
+        }
+        let block = &udp_payload[off..off + len];
+        *block_count += 1;
+        any_block = true;
+ 
+        match codec.decode_transport(block) {
+            Ok(transport_values) => {
+                if let Some(msg_name) = resolved.message_for_transport_values(&transport_values) {
+                    // decode_frame will skip 3-byte transport header.
+                    match decode_frame(codec, msg_name, block, Some(3)) {
+                        Ok(res) => {
+                            *decoded_records += res.messages.len() as u64;
+                            *removed_records += res.removed.len() as u64;
+                            let entry = known_categories.entry(cat).or_insert((0, 0, 0));
+                            entry.0 += 1;
+                            entry.1 += res.messages.len() as u64;
+                            entry.2 += res.removed.len() as u64;
+                            if first_errors.get(&cat).is_none() {
+                                if let Some(rm) = res.removed.first() {
+                                    first_errors.insert(cat, rm.reason.clone());
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            *removed_records += 1;
+                            let entry = known_categories.entry(cat).or_insert((0, 0, 0));
+                            entry.0 += 1;
+                            entry.2 += 1;
+                            first_errors.entry(cat).or_insert_with(|| e.to_string());
+                        }
+                    }
+                } else {
+                    *unknown_categories.entry(cat).or_insert(0) += 1;
+                }
+            }
+            Err(_) => {
+                *unknown_categories.entry(cat).or_insert(0) += 1;
+            }
+        }
+ 
+        off += len;
+    }
+    if verbose && !any_block && !udp_payload.is_empty() {
+        let show = udp_payload.len().min(16);
+        eprintln!(
+            "note: udp payload had no ASTERIX blocks (first {} bytes: {:02x?})",
+            show,
+            &udp_payload[..show]
+        );
+    }
+}
+ 
+/// Extract UDP payload bytes from a captured frame, using linktype and IPv4/UDP length fields.
+/// This avoids including Ethernet padding in short frames.
+fn udp_payload_from_linktype(linktype: Linktype, frame: &[u8]) -> Option<&[u8]> {
+    let l3 = match linktype.0 {
+        1 => ethernet_l3(frame)?,      // DLT_EN10MB
+        101 => frame,                  // DLT_RAW
+        113 => linux_sll_l3(frame)?,   // DLT_LINUX_SLL
+        _ => return None,
+    };
+    ipv4_udp_payload(l3)
+}
+ 
+fn ethernet_l3(frame: &[u8]) -> Option<&[u8]> {
+    if frame.len() < 14 {
+        return None;
+    }
+    let mut off = 12usize;
+    let mut ethertype = u16::from_be_bytes([frame[off], frame[off + 1]]);
+    off += 2;
+    // VLAN tags (802.1Q / 802.1ad): skip tag (4 bytes) and read next ethertype.
+    while ethertype == 0x8100 || ethertype == 0x88a8 {
+        if frame.len() < off + 4 + 2 {
+            return None;
+        }
+        off += 4; // TCI + inner ethertype starts after 4 bytes
+        ethertype = u16::from_be_bytes([frame[off], frame[off + 1]]);
+        off += 2;
+    }
+    match ethertype {
+        0x0800 => Some(&frame[off..]), // IPv4
+        _ => None,
+    }
+}
+ 
+fn linux_sll_l3(frame: &[u8]) -> Option<&[u8]> {
+    // Linux cooked capture v1 (SLL): 16-byte header, protocol at bytes 14..16
+    if frame.len() < 16 {
+        return None;
+    }
+    let proto = u16::from_be_bytes([frame[14], frame[15]]);
+    match proto {
+        0x0800 => Some(&frame[16..]), // IPv4
+        _ => None,
+    }
+}
+ 
+fn ipv4_udp_payload(l3: &[u8]) -> Option<&[u8]> {
+    if l3.len() < 20 {
+        return None;
+    }
+    let ver_ihl = l3[0];
+    let version = ver_ihl >> 4;
+    if version != 4 {
+        return None;
+    }
+    let ihl = (ver_ihl & 0x0f) as usize * 4;
+    if ihl < 20 || l3.len() < ihl {
+        return None;
+    }
+    let total_len = u16::from_be_bytes([l3[2], l3[3]]) as usize;
+    if total_len < ihl {
+        return None;
+    }
+    let l3_trunc = if total_len <= l3.len() { &l3[..total_len] } else { l3 };
+    if l3_trunc.len() < ihl + 8 {
+        return None;
+    }
+    let proto = l3_trunc[9];
+    if proto != 17 {
+        return None; // not UDP
+    }
+    let udp = &l3_trunc[ihl..];
+    if udp.len() < 8 {
+        return None;
+    }
+    let udp_len = u16::from_be_bytes([udp[4], udp[5]]) as usize;
+    if udp_len < 8 || udp.len() < udp_len {
+        return None;
+    }
+    Some(&udp[8..udp_len])
+}
+

@@ -230,17 +230,17 @@ type Cat002Record {
 
 type Cat034Record {
   i034_010: DataSourceId?;
-  i034_000: integer? [0..255];
-  i034_020: integer? [0..255];
+  i034_000: integer? [1..8];   // Message Type: 1=North Marker, 2=Sector Crossing, 3=Solar, 4=End of Day, 5=Start of Day, 6=Geometric Altitude, 7=Receiver Summary, 8=Transmitter Summary
   i034_030: TimeOfDay24?;
+  i034_020: integer? [0..255];
   i034_041: integer? [0..65535];
   i034_050: SystemConfig034?;
   i034_060: SystemProcessingMode034?;
   i034_070: sequence of MessageCountEntry?;
-  i034_090: CollimationError?;
   i034_100: PolarWindow?;
   i034_110: integer? [0..255];
   i034_120: Position3D?;
+  i034_090: CollimationError?;
 }
 
 type Cat048Record {
@@ -317,7 +317,7 @@ message Cat002Record {
   i002_041: optional<u16> [0..65535];             // Antenna Rotation Period (content not verifiable)
   i002_050: optional<list<u8>>;                   // Station Configuration Status (variable length)
   i002_060: optional<list<u8>>;                   // Station Processing Mode (variable length)
-  i002_070: optional<list<PlotCountValue>>;       // Plot Count Values
+  i002_070: optional<rep_list<PlotCountValue>>;  // Plot Count Values (REP + entries)
   i002_100: optional<DynamicWindow>;              // Dynamic Window - Type 1
   i002_090: optional<CollimationError>;           // Collimation Error
   i002_080: optional<list<u8>>;                   // Warning/Error Conditions (variable length)
@@ -325,23 +325,24 @@ message Cat002Record {
 
 // ============== CAT 034 - Monoradar Service Messages ==============
 // UAP: 010, 000, 030, 020, 041, 050, 060, (FX) 070, 100, 110, 120, 090, ...
+// I034/000 Message Type: North Marker, Sector Crossing, Solar, End of Day, Start of Day, etc.
 message Cat034Record {
   fspec: fspec -> (
-    0: i034_010, 1: i034_000, 2: i034_020, 3: i034_030, 4: i034_041, 5: i034_050, 6: i034_060, 7: FX,
-    8: i034_070, 9: i034_090, 10: i034_100, 11: i034_110, 12: i034_120
+    0: i034_010, 1: i034_000, 2: i034_030, 3: i034_020, 4: i034_041, 5: i034_050, 6: i034_060, 7: FX,
+    8: i034_070, 9: i034_100, 10: i034_110, 11: i034_120, 12: i034_090
   );
   i034_010: optional<DataSourceId>;
-  i034_000: optional<u8> [0..255];      // content not verifiable (full range)
-  i034_020: optional<u8> [0..255];     // content not verifiable (full range)
+  i034_000: optional<u8> [1..8];         // Message Type: 1=North Marker, 2=Sector Crossing, 3=Solar, 4=End of Day, 5=Start of Day, 6=Geometric Altitude, 7=Receiver Summary, 8=Transmitter Summary
   i034_030: optional<TimeOfDay24>;
+  i034_020: optional<u8> [0..255];     // content not verifiable (full range)
   i034_041: optional<u16> [0..65535];  // content not verifiable (full range)
   i034_050: optional<SystemConfig034>;
   i034_060: optional<SystemProcessingMode034>;
-  i034_070: optional<list<MessageCountEntry>>;
-  i034_090: optional<CollimationError>;
+  i034_070: optional<rep_list<MessageCountEntry>>;
   i034_100: optional<PolarWindow>;
   i034_110: optional<u8> [0..255];     // content not verifiable (full range)
   i034_120: optional<Position3D>;
+  i034_090: optional<CollimationError>;
 }
 
 // ============== CAT 048 - Monoradar Target Reports (current) ==============
@@ -506,6 +507,7 @@ struct TrackStatus001 {
   dou: bitfield(1) [0..1]; rdpc: bitfield(1) [0..1];
   spare: padding_bits(1);
   gho: bitfield(1) [0..1];
+  spare2: padding_bits(1);
   // above bitfield(1) [0..1]: content not verifiable (full range)
 }
 
@@ -520,6 +522,7 @@ struct TrackStatus048 {
 struct TrackStatus048Ext {
   tre: bitfield(1) [0..1]; gho: bitfield(1) [0..1]; sup: bitfield(1) [0..1]; tcc: bitfield(1) [0..1];
   spare: padding_bits(3);
+  spare2: padding_bits(1);
   // above bitfield(1) [0..1]: content not verifiable (full range)
 }
 
@@ -561,7 +564,7 @@ struct SystemProcessingMode034 {
 }
 
 struct MessageCountEntry {
-  typ: u8(5) [0..31];
+  typ: bitfield(5) [0..31];
   count: u16(11) [0..2047];
 }
 
@@ -572,7 +575,7 @@ struct CollimationError {
 
 // Cat002: I002/070 Plot Count Values entry (3 bytes each)
 struct PlotCountValue {
-  typ: u8(5) [0..31];         // Counter type (SSR, PSR, etc.)
+  typ: bitfield(5) [0..31];   // Counter type (SSR, PSR, etc.)
   count: u16(11) [0..2047];   // Plot count
 }
 
