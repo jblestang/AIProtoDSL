@@ -85,10 +85,25 @@ fn build_selector_spec(pair: pest::iterators::Pair<Rule>) -> Result<PayloadSelec
         if part.as_rule() == Rule::selector_mapping {
             let mut it = part.into_inner();
             let lit_pair = it.next().ok_or("selector mapping: literal")?;
-            let msg_pair = it.next().ok_or("selector mapping: message name")?;
+            let msg_type_pair = it.next().ok_or("selector mapping: message type")?;
             let literal = parse_literal(lit_pair.as_str());
-            let message_name = msg_pair.as_str().to_string();
-            value_to_message.push((literal, message_name));
+            // selector_msg_type: either selector_list_type (list<ident>) or plain ident
+            let (message_name, is_list) = if msg_type_pair.as_rule() == Rule::selector_msg_type {
+                let first = msg_type_pair.into_inner().next().ok_or("selector msg type")?;
+                match first.as_rule() {
+                    Rule::selector_list_type => {
+                        let ident = first.into_inner().next().ok_or("list<ident>: missing ident")?;
+                        (ident.as_str().to_string(), true)
+                    }
+                    Rule::ident => {
+                        (first.as_str().to_string(), false)
+                    }
+                    _ => return Err(format!("unexpected selector_msg_type child: {:?}", first.as_rule())),
+                }
+            } else {
+                (msg_type_pair.as_str().to_string(), false)
+            };
+            value_to_message.push((literal, message_name, is_list));
         }
     }
     if value_to_message.is_empty() {
@@ -298,7 +313,8 @@ fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String
             let mapping = inner_iter
                 .find(|p| p.as_rule() == Rule::fspec_mapping_list)
                 .map(|pair| {
-                    pair.into_inner()
+                    // Parse all entries (including FX) with physical bit positions
+                    let all_entries: Vec<(u32, String)> = pair.into_inner()
                         .filter(|p| p.as_rule() == Rule::fspec_bit_mapping)
                         .map(|p| {
                             let mut it = p.into_inner();
@@ -308,7 +324,26 @@ fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String
                             let name = ident_p.as_str().to_string();
                             Ok((bit, name))
                         })
-                        .collect::<Result<Vec<_>, String>>()
+                        .collect::<Result<Vec<_>, String>>()?;
+                    // Validate FX entries are at physical positions 7, 15, 23, ... (every 8th bit starting at 7)
+                    // Filter out FX entries and renumber remaining to logical (data-only) indices.
+                    let mut logical = Vec::new();
+                    let mut logical_idx: u32 = 0;
+                    for (phys_bit, name) in &all_entries {
+                        if name == "FX" {
+                            if phys_bit % 8 != 7 {
+                                return Err(format!(
+                                    "fspec mapping: FX at physical bit {} is invalid (must be at 7, 15, 23, ...)",
+                                    phys_bit
+                                ));
+                            }
+                            // Skip FX entries; they don't map to a data field
+                        } else {
+                            logical.push((logical_idx, name.clone()));
+                            logical_idx += 1;
+                        }
+                    }
+                    Ok(logical)
                 })
                 .transpose()?;
             Ok(match mapping {

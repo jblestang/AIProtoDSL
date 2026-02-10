@@ -19,7 +19,9 @@ struct_section    = { "struct" ~ ident ~ "{" ~ struct_field* ~ "}" }
 payload_field = { messages_list | selector_spec | repeated_spec }
 messages_list = { "messages" ~ ":" ~ ident ~ ("," ~ ident)* ~ ";" }
 selector_spec = { "selector" ~ ":" ~ ident ~ "->" ~ (selector_mapping ~ ",")* ~ selector_mapping ~ ";" }
-selector_mapping = { literal ~ ":" ~ ident }
+selector_mapping = { literal ~ ":" ~ selector_msg_type }
+selector_msg_type = { selector_list_type | ident }
+selector_list_type = { "list" ~ "<" ~ ident ~ ">" }
 repeated_spec = { "repeated" ~ ";" }
 
 // --- Transport (frame/header envelope) ---

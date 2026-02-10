@@ -3,7 +3,7 @@
 use aiprotodsl::codec::{Codec, Endianness};
 use aiprotodsl::frame;
 use aiprotodsl::walk::{message_extent, validate_message_in_place, zero_padding_reserved_in_place, remove_message_in_place, Endianness as WalkEndianness};
-use aiprotodsl::{parse, ResolvedProtocol, Value};
+use aiprotodsl::{parse, ResolvedProtocol, TypeSpec, Value};
 use std::collections::HashMap;
 
 const SIMPLE_PROTO: &str = r#"
@@ -373,7 +373,30 @@ fn test_asterix_family_parse() {
     transport_values.insert("category".to_string(), Value::U8(34));
     assert_eq!(resolved.message_for_transport_values(&transport_values), Some("Cat034Record"));
 
-    assert!(resolved.payload_repeated(), "ASTERIX payload is a list of records per data block");
+    assert!(resolved.payload_repeated(), "ASTERIX payload is a list of records per data block (list<...> in selector)");
+
+    // payload_is_list_for_transport: category=48 -> list<Cat048Record>
+    assert!(resolved.payload_is_list_for_transport(&transport_values));
+
+    // Cat002: verify full UAP fields are parsed
+    assert!(resolved.get_message("Cat002Record").is_some());
+    let cat002 = resolved.get_message("Cat002Record").unwrap();
+    // Cat002 has 11 optional fields (010, 000, 020, 030, 041, 050, 060, 070, 100, 090, 080)
+    let cat002_optionals: Vec<&str> = cat002.fields.iter()
+        .filter(|f| matches!(f.type_spec, TypeSpec::Optional(_)))
+        .map(|f| f.name.as_str())
+        .collect();
+    assert_eq!(cat002_optionals.len(), 11);
+    assert_eq!(cat002_optionals[0], "i002_010");
+    assert_eq!(cat002_optionals[1], "i002_000");
+    assert_eq!(cat002_optionals[7], "i002_070");
+    assert_eq!(cat002_optionals[10], "i002_080");
+
+    // Cat002 FSPEC mapping with FX bits
+    let fspec002 = resolved.fspec_mapping_message("Cat002Record").expect("Cat002Record has fspec");
+    assert_eq!(fspec002.optional_fields.len(), 11);
+    assert_eq!(fspec002.field_for_bit(0), Some("i002_010"));
+    assert_eq!(fspec002.field_for_bit(7), Some("i002_070")); // logical 7 (physical 8, after FX at 7)
 
     // FSPEC mapping: explicit link between fspec field and the optional fields it governs
     let fspec = resolved.fspec_mapping_message("Cat048Record").expect("Cat048Record has fspec");
@@ -382,7 +405,7 @@ fn test_asterix_family_parse() {
     assert_eq!(fspec.optional_fields[0], "i048_010");
     assert_eq!(fspec.optional_fields[1], "i048_020");
     assert!(fspec.optional_fields.contains(&"i048_161".to_string()));
-    // Explicit bit position -> field mapping
+    // Explicit bit position -> field mapping (FX bits filtered, logical indices)
     assert_eq!(fspec.bit_to_field[0], (0, "i048_010".to_string()));
     assert_eq!(fspec.bit_to_field[1], (1, "i048_020".to_string()));
     assert_eq!(fspec.field_for_bit(0), Some("i048_010"));

@@ -27,8 +27,9 @@ pub struct PayloadSection {
 pub struct PayloadSelector {
     /// Transport field name (e.g. "category") whose value selects the message type.
     pub transport_field: String,
-    /// (value, message_name) pairs: when transport_field equals value, use this message.
-    pub value_to_message: Vec<(Literal, String)>,
+    /// (value, message_name, is_list) triples: when transport_field equals value, use this message.
+    /// `is_list` is true when the DSL uses `list<MessageName>` (one or more records of that type).
+    pub value_to_message: Vec<(Literal, String, bool)>,
 }
 
 #[derive(Debug, Clone)]
@@ -312,7 +313,7 @@ impl ResolvedProtocol {
                 }
             }
             if let Some(ref sel) = payload.selector {
-                for (_, msg_name) in &sel.value_to_message {
+                for (_, msg_name, _) in &sel.value_to_message {
                     if !messages_by_name.contains_key(msg_name) {
                         return Err(format!("payload selector message '{}' is not a defined message", msg_name));
                     }
@@ -356,7 +357,7 @@ impl ResolvedProtocol {
         let sel = payload.selector.as_ref()?;
         let v = transport_values.get(&sel.transport_field)?;
         let n = v.as_i64()?;
-        for (lit, msg_name) in &sel.value_to_message {
+        for (lit, msg_name, _) in &sel.value_to_message {
             if lit.as_i64() == Some(n) {
                 return Some(msg_name);
             }
@@ -365,8 +366,32 @@ impl ResolvedProtocol {
     }
 
     /// When true, the payload after transport is a list of records (zero or more messages of the selected type per block).
+    /// True if the `repeated;` directive is present, or if any selector mapping uses `list<MessageName>`.
     pub fn payload_repeated(&self) -> bool {
-        self.protocol.payload.as_ref().map(|p| p.repeated).unwrap_or(false)
+        self.protocol.payload.as_ref().map(|p| {
+            p.repeated || p.selector.as_ref().map(|s| s.value_to_message.iter().any(|(_, _, is_list)| *is_list)).unwrap_or(false)
+        }).unwrap_or(false)
+    }
+
+    /// Check if the payload for a specific transport value is a list (uses `list<MessageName>` in selector).
+    pub fn payload_is_list_for_transport(&self, transport_values: &std::collections::HashMap<String, crate::value::Value>) -> bool {
+        if let Some(payload) = &self.protocol.payload {
+            if payload.repeated {
+                return true;
+            }
+            if let Some(sel) = &payload.selector {
+                if let Some(v) = transport_values.get(&sel.transport_field) {
+                    if let Some(n) = v.as_i64() {
+                        for (lit, _, is_list) in &sel.value_to_message {
+                            if lit.as_i64() == Some(n) {
+                                return *is_list;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        false
     }
 
     pub fn get_struct(&self, name: &str) -> Option<&StructSection> {

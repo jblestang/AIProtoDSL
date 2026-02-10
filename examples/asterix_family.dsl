@@ -9,17 +9,20 @@ transport {
 }
 
 // Which messages can follow the transport and how to select message type from category.
-// repeated: payload is a list of records (zero or more of the selected type per data block).
+// list<...>: one or more records of the selected type per data block.
 payload {
   messages: Cat001Record, Cat002Record, Cat034Record, Cat048Record, Cat240Record;
-  selector: category -> 1: Cat001Record, 2: Cat002Record, 34: Cat034Record, 48: Cat048Record, 240: Cat240Record;
-  repeated;
+  selector: category -> 1: list<Cat001Record>, 2: list<Cat002Record>, 34: list<Cat034Record>, 48: list<Cat048Record>, 240: list<Cat240Record>;
 }
 
 // ============== CAT 001 - Monoradar Target Reports (legacy) ==============
 // UAP: 010, 020, 040, 070, 090, 130, 141, (FX) 050, 120, 131, 080, 100, 060, 030, (FX) 150, ...
 message Cat001Record {
-  fspec: fspec -> (0: i001_010, 1: i001_020, 2: i001_040, 3: i001_042, 4: i001_030, 5: i001_050, 6: i001_070, 7: i001_080, 8: i001_090, 9: i001_100, 10: i001_120, 11: i001_130, 12: i001_131, 13: i001_141, 14: i001_161, 15: i001_170, 16: i001_200, 17: i001_210);
+  fspec: fspec -> (
+    0: i001_010, 1: i001_020, 2: i001_040, 3: i001_042, 4: i001_030, 5: i001_050, 6: i001_070, 7: FX,
+    8: i001_080, 9: i001_090, 10: i001_100, 11: i001_120, 12: i001_130, 13: i001_131, 14: i001_141, 15: FX,
+    16: i001_161, 17: i001_170, 18: i001_200, 19: i001_210
+  );
   i001_010: optional<DataSourceId>;
   i001_020: optional<TargetReportDescriptor001>;
   i001_040: optional<MeasuredPositionPolar>;
@@ -40,16 +43,33 @@ message Cat001Record {
   i001_210: optional<list<u8>>;
 }
 
-// ============== CAT 002 (placeholder) ==============
+// ============== CAT 002 - Monoradar Service Messages ==============
+// UAP: 010, 000, 020, 030, 041, 050, 060, (FX) 070, 100, 090, 080, ...
 message Cat002Record {
-  fspec: fspec -> (0: i002_010);
+  fspec: fspec -> (
+    0: i002_010, 1: i002_000, 2: i002_020, 3: i002_030, 4: i002_041, 5: i002_050, 6: i002_060, 7: FX,
+    8: i002_070, 9: i002_100, 10: i002_090, 11: i002_080
+  );
   i002_010: optional<DataSourceId>;
+  i002_000: optional<u8> [1..8];                  // Message Type (1..8: North Marker, Sector Crossing, etc.)
+  i002_020: optional<u8> [0..255];                // Sector Number (content not verifiable, full range)
+  i002_030: optional<TimeOfDay24>;                // Time of Day
+  i002_041: optional<u16> [0..65535];             // Antenna Rotation Period (content not verifiable)
+  i002_050: optional<list<u8>>;                   // Station Configuration Status (variable length)
+  i002_060: optional<list<u8>>;                   // Station Processing Mode (variable length)
+  i002_070: optional<list<PlotCountValue>>;       // Plot Count Values
+  i002_100: optional<DynamicWindow>;              // Dynamic Window - Type 1
+  i002_090: optional<CollimationError>;           // Collimation Error
+  i002_080: optional<list<u8>>;                   // Warning/Error Conditions (variable length)
 }
 
 // ============== CAT 034 - Monoradar Service Messages ==============
 // UAP: 010, 000, 030, 020, 041, 050, 060, (FX) 070, 100, 110, 120, 090, ...
 message Cat034Record {
-  fspec: fspec -> (0: i034_010, 1: i034_000, 2: i034_020, 3: i034_030, 4: i034_041, 5: i034_050, 6: i034_060, 7: i034_070, 8: i034_090, 9: i034_100, 10: i034_110, 11: i034_120);
+  fspec: fspec -> (
+    0: i034_010, 1: i034_000, 2: i034_020, 3: i034_030, 4: i034_041, 5: i034_050, 6: i034_060, 7: FX,
+    8: i034_070, 9: i034_090, 10: i034_100, 11: i034_110, 12: i034_120
+  );
   i034_010: optional<DataSourceId>;
   i034_000: optional<u8> [0..255];      // content not verifiable (full range)
   i034_020: optional<u8> [0..255];     // content not verifiable (full range)
@@ -67,7 +87,11 @@ message Cat034Record {
 // ============== CAT 048 - Monoradar Target Reports (current) ==============
 // UAP: 010, 020, 030, 040, 042, 050, 055, 060, 065, 070, 080, 090, 100, 110, 120, 130, 140, 161, 170, 200, 210, ...
 message Cat048Record {
-  fspec: fspec -> (0: i048_010, 1: i048_020, 2: i048_030, 3: i048_040, 4: i048_042, 5: i048_050, 6: i048_055, 7: i048_060, 8: i048_065, 9: i048_070, 10: i048_080, 11: i048_090, 12: i048_100, 13: i048_110, 14: i048_120, 15: i048_130, 16: i048_140, 17: i048_161, 18: i048_170, 19: i048_200, 20: i048_210);
+  fspec: fspec -> (
+    0: i048_010, 1: i048_020, 2: i048_030, 3: i048_040, 4: i048_042, 5: i048_050, 6: i048_055, 7: FX,
+    8: i048_060, 9: i048_065, 10: i048_070, 11: i048_080, 12: i048_090, 13: i048_100, 14: i048_110, 15: FX,
+    16: i048_120, 17: i048_130, 18: i048_140, 19: i048_161, 20: i048_170, 21: i048_200, 22: i048_210
+  );
   i048_010: optional<DataSourceId>;
   i048_020: optional<TargetReportDescriptor048>;
   i048_030: optional<list<u8>>;
@@ -93,7 +117,7 @@ message Cat048Record {
 
 // ============== CAT 240 - Radar Video Transmission ==============
 message Cat240Record {
-  fspec: fspec -> (0: i240_010);
+  fspec: fspec -> (0: i240_010);  // single item, no FX needed
   i240_010: optional<DataSourceId>;
 }
 
@@ -284,6 +308,20 @@ struct MessageCountEntry {
 struct CollimationError {
   rng: i8 [-128..127];   // content not verifiable (full range)
   azm: i8 [-128..127];   // content not verifiable (full range)
+}
+
+// Cat002: I002/070 Plot Count Values entry (3 bytes each)
+struct PlotCountValue {
+  typ: u8(5) [0..31];         // Counter type (SSR, PSR, etc.)
+  count: u16(11) [0..2047];   // Plot count
+}
+
+// Cat002: I002/100 Dynamic Window - Type 1 (8 bytes)
+struct DynamicWindow {
+  rhost: u16 [0..65535];     // Rho start (content not verifiable)
+  rhoend: u16 [0..65535];    // Rho end (content not verifiable)
+  thetast: u16 [0..65535];   // Theta start (content not verifiable)
+  thetaend: u16 [0..65535];  // Theta end (content not verifiable)
 }
 
 struct PolarWindow {
