@@ -48,7 +48,7 @@ pub mod parser;
 pub mod value;
 pub mod walk;
 
-pub use ast::{FspecMapping, Protocol, ResolvedProtocol, TypeSpec};
+pub use ast::{AbstractType, FspecMapping, Protocol, ResolvedProtocol, TypeDefSection, TypeSpec};
 pub use codec::{Codec, CodecError, Endianness};
 pub use frame::{decode_frame, FrameDecodeResult};
 pub use parser::parse;

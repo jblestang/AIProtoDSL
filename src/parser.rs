@@ -19,6 +19,7 @@ pub fn parse(source: &str) -> Result<Protocol, String> {
 fn build_protocol(pair: pest::iterators::Pair<Rule>) -> Result<Protocol, String> {
     let mut transport = None;
     let mut payload = None;
+    let mut type_defs = Vec::new();
     let mut messages = Vec::new();
     let mut structs = Vec::new();
 
@@ -26,6 +27,7 @@ fn build_protocol(pair: pest::iterators::Pair<Rule>) -> Result<Protocol, String>
         match inner.as_rule() {
             Rule::transport_section => transport = Some(build_transport(inner)?),
             Rule::payload_section => payload = Some(build_payload(inner)?),
+            Rule::type_section => type_defs.push(build_type_def_section(inner)?),
             Rule::message_section => messages.push(build_message(inner)?),
             Rule::struct_section => structs.push(build_struct(inner)?),
             _ => {}
@@ -35,6 +37,7 @@ fn build_protocol(pair: pest::iterators::Pair<Rule>) -> Result<Protocol, String>
     Ok(Protocol {
         transport,
         payload,
+        type_defs,
         messages,
         structs,
     })
@@ -114,6 +117,72 @@ fn build_selector_spec(pair: pest::iterators::Pair<Rule>) -> Result<PayloadSelec
         value_to_message,
     })
 }
+
+// ==================== Abstract data model (type sections) ====================
+
+fn build_type_def_section(pair: pest::iterators::Pair<Rule>) -> Result<TypeDefSection, String> {
+    let mut name = String::new();
+    let mut fields = Vec::new();
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::ident => name = inner.as_str().to_string(),
+            Rule::type_def_field => fields.push(build_type_def_field(inner)?),
+            _ => {}
+        }
+    }
+    Ok(TypeDefSection { name, fields })
+}
+
+fn build_type_def_field(pair: pest::iterators::Pair<Rule>) -> Result<TypeDefField, String> {
+    let mut name = String::new();
+    let mut abstract_type = None;
+    let mut optional = false;
+    let mut constraint = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::ident => {
+                if name.is_empty() {
+                    name = inner.as_str().to_string();
+                }
+            }
+            Rule::abstract_type_spec => abstract_type = Some(build_abstract_type(inner)?),
+            Rule::type_optional => optional = true,
+            Rule::constraint => constraint = Some(build_constraint(inner)?),
+            _ => {}
+        }
+    }
+    Ok(TypeDefField {
+        name,
+        abstract_type: abstract_type.ok_or("Missing abstract type in type field")?,
+        optional,
+        constraint,
+    })
+}
+
+fn build_abstract_type(pair: pest::iterators::Pair<Rule>) -> Result<AbstractType, String> {
+    let inner = pair.into_inner().next().ok_or("Empty abstract_type_spec")?;
+    match inner.as_rule() {
+        Rule::abstract_base_type => {
+            match inner.as_str() {
+                "integer" => Ok(AbstractType::Integer),
+                "boolean" => Ok(AbstractType::Boolean),
+                "octets" => Ok(AbstractType::Octets),
+                "real" => Ok(AbstractType::Real),
+                other => Err(format!("Unknown abstract base type: {}", other)),
+            }
+        }
+        Rule::abstract_seq_type => {
+            let inner_type = inner.into_inner()
+                .find(|p| p.as_rule() == Rule::abstract_type_spec)
+                .ok_or("sequence of: missing element type")?;
+            Ok(AbstractType::SequenceOf(Box::new(build_abstract_type(inner_type)?)))
+        }
+        Rule::ident => Ok(AbstractType::TypeRef(inner.as_str().to_string())),
+        _ => Err(format!("Unhandled abstract type rule: {:?}", inner.as_rule())),
+    }
+}
+
+// ==================== Encoding (transport, message, struct) ====================
 
 fn build_transport(pair: pest::iterators::Pair<Rule>) -> Result<TransportSection, String> {
     let mut fields = Vec::new();

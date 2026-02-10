@@ -3,7 +3,7 @@
 use aiprotodsl::codec::{Codec, Endianness};
 use aiprotodsl::frame;
 use aiprotodsl::walk::{message_extent, validate_message_in_place, zero_padding_reserved_in_place, remove_message_in_place, Endianness as WalkEndianness};
-use aiprotodsl::{parse, ResolvedProtocol, TypeSpec, Value};
+use aiprotodsl::{parse, AbstractType, ResolvedProtocol, TypeSpec, Value};
 use std::collections::HashMap;
 
 const SIMPLE_PROTO: &str = r#"
@@ -374,6 +374,21 @@ fn test_asterix_family_parse() {
     assert_eq!(resolved.message_for_transport_values(&transport_values), Some("Cat034Record"));
 
     assert!(resolved.payload_repeated(), "ASTERIX payload is a list of records per data block (list<...> in selector)");
+
+    // Abstract data model: type definitions (ASN.1-like)
+    assert!(resolved.get_type_def("DataSourceId").is_some(), "type DataSourceId");
+    assert!(resolved.get_type_def("Cat048Record").is_some(), "type Cat048Record");
+    assert!(resolved.get_type_def("Cat002Record").is_some(), "type Cat002Record");
+    let td = resolved.get_type_def("DataSourceId").unwrap();
+    assert_eq!(td.fields.len(), 2);
+    assert_eq!(td.fields[0].name, "sac");
+    assert!(!td.fields[0].optional);
+    assert!(matches!(td.fields[0].abstract_type, AbstractType::Integer));
+    let td048 = resolved.get_type_def("Cat048Record").unwrap();
+    assert!(td048.fields.len() > 10, "Cat048Record type should have many fields");
+    assert_eq!(td048.fields[0].name, "i048_010");
+    assert!(td048.fields[0].optional, "i048_010 should be optional in abstract type");
+    assert!(matches!(td048.fields[0].abstract_type, AbstractType::TypeRef(ref s) if s == "DataSourceId"));
 
     // payload_is_list_for_transport: category=48 -> list<Cat048Record>
     assert!(resolved.payload_is_list_for_transport(&transport_values));

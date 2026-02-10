@@ -15,6 +15,266 @@ payload {
   selector: category -> 1: list<Cat001Record>, 2: list<Cat002Record>, 34: list<Cat034Record>, 48: list<Cat048Record>, 240: list<Cat240Record>;
 }
 
+// ==============================================================================
+// ABSTRACT DATA MODEL (ASN.1-like) — describes WHAT the data is
+// ==============================================================================
+
+// --- Data item types ---
+
+type DataSourceId {
+  sac: integer [0..255];
+  sic: integer [0..255];
+}
+
+type TargetReportDescriptor001 {
+  typ: integer [0..1];
+  sim: integer [0..1];
+  ssrpsr: integer [0..3];
+  ant: integer [0..1];
+  spi: integer [0..1];
+  rab: integer [0..1];
+}
+
+type TargetReportDescriptor048 {
+  typ: integer [0..7];
+  sim: integer [0..1];
+  rdp: integer [0..1];
+  spi: integer [0..1];
+  rab: integer [0..1];
+}
+
+type MeasuredPositionPolar {
+  rho: integer [0..65535];
+  theta: integer [0..65535];
+}
+
+type CalculatedPositionCartesian {
+  x: integer [-32768..32767];
+  y: integer [-32768..32767];
+}
+
+type Mode2Code {
+  v: integer [0..1];
+  g: integer [0..1];
+  l: integer [0..1];
+  mode2: integer [0..4095];
+}
+
+type Mode1Code {
+  v: integer [0..1];
+  g: integer [0..1];
+  l: integer [0..1];
+  mode1: integer [0..31];
+}
+
+type Mode3ACode {
+  v: integer [0..1];
+  g: integer [0..1];
+  l: integer [0..1];
+  mode3a: integer [0..4095];
+}
+
+type Mode2Confidence {
+  qa4: integer [0..1]; qa2: integer [0..1]; qa1: integer [0..1];
+  qb4: integer [0..1]; qb2: integer [0..1]; qb1: integer [0..1];
+  qc4: integer [0..1]; qc2: integer [0..1]; qc1: integer [0..1];
+  qd4: integer [0..1]; qd2: integer [0..1]; qd1: integer [0..1];
+}
+
+type Mode1Confidence {
+  qa4: integer [0..1]; qa2: integer [0..1]; qa1: integer [0..1];
+  qb2: integer [0..1]; qb1: integer [0..1];
+}
+
+type Mode3AConfidence {
+  qa4: integer [0..1]; qa2: integer [0..1]; qa1: integer [0..1];
+  qb4: integer [0..1]; qb2: integer [0..1]; qb1: integer [0..1];
+  qc4: integer [0..1]; qc2: integer [0..1]; qc1: integer [0..1];
+  qd4: integer [0..1]; qd2: integer [0..1]; qd1: integer [0..1];
+}
+
+type FlightLevel {
+  v: integer [0..1];
+  g: integer [0..1];
+  fl: integer [0..16383];
+}
+
+type ModeCCodeConfidence {
+  v: integer [0..1]; g: integer [0..1];
+  modec: integer [0..4095];
+  qc1: integer [0..1]; qa1: integer [0..1]; qc2: integer [0..1]; qa2: integer [0..1];
+  qc4: integer [0..1]; qa4: integer [0..1]; qb1: integer [0..1]; qd1: integer [0..1];
+  qb2: integer [0..1]; qd2: integer [0..1]; qb4: integer [0..1]; qd4: integer [0..1];
+}
+
+type TimeOfDay24 {
+  tod: integer [0..16777215];
+}
+
+type TrackNumber {
+  trn: integer [0..4095];
+}
+
+type TrackStatus001 {
+  con: integer [0..1]; rad: integer [0..1]; man: integer [0..1];
+  dou: integer [0..1]; rdpc: integer [0..1];
+  gho: integer [0..1];
+}
+
+type TrackStatus048 {
+  cnf: integer [0..1];
+  rad: integer [0..3];
+  dou: integer [0..1]; mah: integer [0..1];
+  cdm: integer [0..3];
+}
+
+type TrackVelocityPolar {
+  gsp: integer [0..65535];
+  hdg: integer [0..65535];
+}
+
+type TrackQuality {
+  sigx: integer [0..255];
+  sigy: integer [0..255];
+}
+
+type DopplerSpeed {
+  d: integer [0..1];
+  cal: integer [-512..511];
+}
+
+type RadarPlotCharacteristics {
+  srl: integer [0..255]; srr: integer [0..255];
+  sam: integer [-128..127];
+  prl: integer [0..255];
+  pam: integer [-128..127]; rpd: integer [-128..127]; apd: integer [-128..127];
+}
+
+type SystemConfig034 {
+  nogo: integer [0..1]; rdpc: integer [0..1]; rdpr: integer [0..1];
+  ovlrdp: integer [0..1]; ovlxmt: integer [0..1]; msc: integer [0..1]; tsv: integer [0..1];
+}
+
+type SystemProcessingMode034 {
+  redrdp: integer [0..7];
+  redxmt: integer [0..7];
+}
+
+type MessageCountEntry {
+  typ: integer [0..31];
+  count: integer [0..2047];
+}
+
+type CollimationError {
+  rng: integer [-128..127];
+  azm: integer [-128..127];
+}
+
+type PolarWindow {
+  rhost: integer [0..65535]; rhoend: integer [0..65535];
+  thetast: integer [0..65535]; thetaend: integer [0..65535];
+}
+
+type Position3D {
+  hgt: integer [-32768..32767];
+  lat: integer [-8388608..8388607];
+  lon: integer [-8388608..8388607];
+}
+
+type PlotCountValue {
+  typ: integer [0..31];
+  count: integer [0..2047];
+}
+
+type DynamicWindow {
+  rhost: integer [0..65535]; rhoend: integer [0..65535];
+  thetast: integer [0..65535]; thetaend: integer [0..65535];
+}
+
+// --- Record types (PDUs) ---
+
+type Cat001Record {
+  i001_010: DataSourceId?;
+  i001_020: TargetReportDescriptor001?;
+  i001_040: MeasuredPositionPolar?;
+  i001_042: CalculatedPositionCartesian?;
+  i001_030: sequence of integer?;
+  i001_050: Mode2Code?;
+  i001_070: Mode3ACode?;
+  i001_080: Mode3AConfidence?;
+  i001_090: FlightLevel?;
+  i001_100: ModeCCodeConfidence?;
+  i001_120: integer? [0..127];
+  i001_130: sequence of integer?;
+  i001_131: integer? [-128..127];
+  i001_141: integer? [0..65535];
+  i001_161: integer? [0..4095];
+  i001_170: TrackStatus001?;
+  i001_200: TrackVelocityPolar?;
+  i001_210: sequence of integer?;
+}
+
+type Cat002Record {
+  i002_010: DataSourceId?;
+  i002_000: integer? [1..8];
+  i002_020: integer? [0..255];
+  i002_030: TimeOfDay24?;
+  i002_041: integer? [0..65535];
+  i002_050: sequence of integer?;
+  i002_060: sequence of integer?;
+  i002_070: sequence of PlotCountValue?;
+  i002_100: DynamicWindow?;
+  i002_090: CollimationError?;
+  i002_080: sequence of integer?;
+}
+
+type Cat034Record {
+  i034_010: DataSourceId?;
+  i034_000: integer? [0..255];
+  i034_020: integer? [0..255];
+  i034_030: TimeOfDay24?;
+  i034_041: integer? [0..65535];
+  i034_050: SystemConfig034?;
+  i034_060: SystemProcessingMode034?;
+  i034_070: sequence of MessageCountEntry?;
+  i034_090: CollimationError?;
+  i034_100: PolarWindow?;
+  i034_110: integer? [0..255];
+  i034_120: Position3D?;
+}
+
+type Cat048Record {
+  i048_010: DataSourceId?;
+  i048_020: TargetReportDescriptor048?;
+  i048_030: sequence of integer?;
+  i048_040: MeasuredPositionPolar?;
+  i048_042: CalculatedPositionCartesian?;
+  i048_050: Mode2Code?;
+  i048_055: Mode1Code?;
+  i048_060: Mode2Confidence?;
+  i048_065: Mode1Confidence?;
+  i048_070: Mode3ACode?;
+  i048_080: Mode3AConfidence?;
+  i048_090: FlightLevel?;
+  i048_100: ModeCCodeConfidence?;
+  i048_110: integer? [-32768..32767];
+  i048_120: DopplerSpeed?;
+  i048_130: RadarPlotCharacteristics?;
+  i048_140: TimeOfDay24?;
+  i048_161: TrackNumber?;
+  i048_170: TrackStatus048?;
+  i048_200: TrackVelocityPolar?;
+  i048_210: TrackQuality?;
+}
+
+type Cat240Record {
+  i240_010: DataSourceId?;
+}
+
+// ==============================================================================
+// ENCODING (ECN-like) — describes HOW the data is serialized on the wire
+// ==============================================================================
+
 // ============== CAT 001 - Monoradar Target Reports (legacy) ==============
 // UAP: 010, 020, 040, 070, 090, 130, 141, (FX) 050, 120, 131, 080, 100, 060, 030, (FX) 150, ...
 message Cat001Record {
@@ -121,7 +381,7 @@ message Cat240Record {
   i240_010: optional<DataSourceId>;
 }
 
-// ============== Structs - Data items ==============
+// --- Encoding: struct-level wire format for data items ---
 
 struct DataSourceId {
   sac: u8 [0..255];   // content not verifiable (full range)

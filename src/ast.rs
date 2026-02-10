@@ -2,15 +2,58 @@
 
 use std::collections::HashMap;
 
-/// Root protocol definition: transport, payload (messages after transport), messages, structs.
+/// Root protocol definition: transport, payload (messages after transport), type definitions (abstract), messages, structs (encoding).
 #[derive(Debug, Clone)]
 pub struct Protocol {
     pub transport: Option<TransportSection>,
     /// Which messages can follow the transport and how to select message type from transport fields.
     pub payload: Option<PayloadSection>,
+    /// Abstract data model definitions (ASN.1-like). Describe WHAT the data is.
+    pub type_defs: Vec<TypeDefSection>,
+    /// Encoding: message-level wire format (ECN-like). Describe HOW the data is serialized.
     pub messages: Vec<MessageSection>,
+    /// Encoding: struct-level wire format (ECN-like). Describe HOW the data is serialized.
     pub structs: Vec<StructSection>,
 }
+
+// ==================== Abstract data model (ASN.1-like) ====================
+
+/// Abstract type definition: describes the data model independent of encoding.
+#[derive(Debug, Clone)]
+pub struct TypeDefSection {
+    pub name: String,
+    pub fields: Vec<TypeDefField>,
+}
+
+/// A field in an abstract type definition.
+#[derive(Debug, Clone)]
+pub struct TypeDefField {
+    pub name: String,
+    pub abstract_type: AbstractType,
+    /// True if the field is optional (marked with `?`).
+    pub optional: bool,
+    /// Value constraint (e.g. [0..255]).
+    pub constraint: Option<Constraint>,
+}
+
+/// Abstract type (ASN.1-like): describes the logical type, not the wire encoding.
+#[derive(Debug, Clone)]
+pub enum AbstractType {
+    /// Integer value (any size/sign — encoding decides the wire format).
+    Integer,
+    /// Boolean value.
+    Boolean,
+    /// Raw byte sequence (variable length).
+    Octets,
+    /// Floating-point value.
+    Real,
+    /// Reference to another defined type.
+    TypeRef(String),
+    /// Ordered sequence of values of a given type (list).
+    SequenceOf(Box<AbstractType>),
+}
+
+// ==================== Payload & transport ====================
 
 /// Declares which message types can appear after the transport and how to select the message from transport fields.
 #[derive(Debug, Clone)]
@@ -280,10 +323,12 @@ impl FspecMapping {
     }
 }
 
-/// Resolved protocol: structs and messages by name for codec.
+/// Resolved protocol: structs and messages by name for codec, type definitions by name for validation.
 #[derive(Debug, Clone)]
 pub struct ResolvedProtocol {
     pub protocol: Protocol,
+    /// Abstract type definitions by name (ASN.1-like data model).
+    pub type_defs_by_name: HashMap<String, usize>,
     pub structs_by_name: HashMap<String, usize>,
     pub messages_by_name: HashMap<String, usize>,
     /// Message name -> FSPEC field and the optional fields it governs.
@@ -294,8 +339,14 @@ pub struct ResolvedProtocol {
 
 impl ResolvedProtocol {
     pub fn resolve(protocol: Protocol) -> Result<Self, String> {
+        let mut type_defs_by_name = HashMap::new();
         let mut structs_by_name = HashMap::new();
         let mut messages_by_name = HashMap::new();
+        for (i, t) in protocol.type_defs.iter().enumerate() {
+            if type_defs_by_name.insert(t.name.clone(), i).is_some() {
+                return Err(format!("Duplicate type name: {}", t.name));
+            }
+        }
         for (i, s) in protocol.structs.iter().enumerate() {
             if structs_by_name.insert(s.name.clone(), i).is_some() {
                 return Err(format!("Duplicate struct name: {}", s.name));
@@ -324,6 +375,7 @@ impl ResolvedProtocol {
         let struct_fspec = build_fspec_mappings_structs(&protocol.structs)?;
         Ok(ResolvedProtocol {
             protocol,
+            type_defs_by_name,
             structs_by_name,
             messages_by_name,
             message_fspec,
@@ -392,6 +444,13 @@ impl ResolvedProtocol {
             }
         }
         false
+    }
+
+    /// Get an abstract type definition by name.
+    pub fn get_type_def(&self, name: &str) -> Option<&TypeDefSection> {
+        self.type_defs_by_name
+            .get(name)
+            .map(|&i| &self.protocol.type_defs[i])
     }
 
     pub fn get_struct(&self, name: &str) -> Option<&StructSection> {

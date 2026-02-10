@@ -7,13 +7,21 @@ COMMENT = _{ "//" ~ (!"\n" ~ ANY)* | "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
 WHITESPACE = _{ " " | "\t" | "\n" | "\r" | COMMENT }
 
 // --- Top-level ---
-// payload: which messages can follow transport and how to select message type from a transport field
-protocol = { SOI ~ (transport_section)? ~ (payload_section)? ~ (message_section)* ~ (struct_section)* ~ EOI }
+// Sections can be interleaved: type (abstract data model), message/struct (encoding), transport, payload.
+protocol = { SOI ~ (transport_section)? ~ (payload_section)? ~ (type_section | message_section | struct_section)* ~ EOI }
 
-transport_section = { "transport" ~ "{" ~ transport_field* ~ "}" }
-payload_section   = { "payload" ~ "{" ~ payload_field* ~ "}" }
-message_section   = { "message" ~ ident ~ "{" ~ message_field* ~ "}" }
-struct_section    = { "struct" ~ ident ~ "{" ~ struct_field* ~ "}" }
+transport_section  = { "transport" ~ "{" ~ transport_field* ~ "}" }
+payload_section    = { "payload" ~ "{" ~ payload_field* ~ "}" }
+type_section       = { "type" ~ ident ~ "{" ~ type_def_field* ~ "}" }
+message_section    = { "message" ~ ident ~ "{" ~ message_field* ~ "}" }
+struct_section     = { "struct" ~ ident ~ "{" ~ struct_field* ~ "}" }
+
+// --- Abstract data model (ASN.1-like type definitions) ---
+type_def_field = { ident ~ ":" ~ abstract_type_spec ~ type_optional? ~ ("[" ~ constraint ~ "]")? ~ ";" }
+type_optional = { "?" }
+abstract_type_spec = { abstract_seq_type | abstract_base_type | ident }
+abstract_seq_type = { "sequence" ~ "of" ~ abstract_type_spec }
+abstract_base_type = { "integer" | "boolean" | "octets" | "real" }
 
 // Payload: messages that can follow transport; optional selector; optional repeated (list of records per block)
 payload_field = { messages_list | selector_spec | repeated_spec }
