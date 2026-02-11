@@ -19,7 +19,7 @@ enum_section       = { "enum" ~ ident ~ "{" ~ enum_variant* ~ "}" }
 enum_variant       = { ident ~ "=" ~ literal ~ ";" }
 
 // --- Abstract data model (ASN.1-like type definitions) ---
-type_def_field = { ident ~ ":" ~ abstract_type_spec ~ type_optional? ~ ("[" ~ constraint ~ "]")? ~ ";" }
+type_def_field = { ident ~ ":" ~ abstract_type_spec ~ type_optional? ~ ("[" ~ constraint ~ "]")? ~ quantum_spec? ~ ";" }
 type_optional = { "?" }
 abstract_type_spec = { abstract_seq_type | abstract_base_type | ident }
 abstract_seq_type = { "sequence" ~ "of" ~ abstract_type_spec }
@@ -36,7 +36,7 @@ repeated_spec = { "repeated" ~ ";" }
 
 // --- Transport (frame/header envelope) ---
 transport_field = {
-    ident ~ ":" ~ transport_type_spec ~ ("=" ~ literal)? ~ ("[" ~ constraint ~ "]")? ~ ";"
+    ident ~ ":" ~ transport_type_spec ~ ("=" ~ literal)? ~ ("[" ~ constraint ~ "]")? ~ quantum_spec? ~ ";"
 }
 transport_type_spec = {
     sized_int_type
@@ -50,10 +50,10 @@ magic_type = { "magic" ~ "(" ~ literal_bytes ~ ")" }
 
 // --- Message body fields ---
 message_field = {
-    ident ~ ":" ~ type_spec ~ ("=" ~ literal)? ~ ("[" ~ constraint ~ "]")? ~ ("if" ~ ident ~ "==" ~ literal)? ~ ";"
+    ident ~ ":" ~ type_spec ~ ("=" ~ literal)? ~ ("[" ~ constraint ~ "]")? ~ quantum_spec? ~ ("if" ~ ident ~ "==" ~ literal)? ~ ";"
 }
 struct_field = {
-    ident ~ ":" ~ type_spec ~ ("=" ~ literal)? ~ ("[" ~ constraint ~ "]")? ~ ("if" ~ ident ~ "==" ~ literal)? ~ ";"
+    ident ~ ":" ~ type_spec ~ ("=" ~ literal)? ~ ("[" ~ constraint ~ "]")? ~ quantum_spec? ~ ("if" ~ ident ~ "==" ~ literal)? ~ ";"
 }
 
 // --- Type specifications ---
@@ -126,6 +126,8 @@ constraint = { range_constraint | enum_constraint }
 interval = { num ~ ".." ~ num }
 range_constraint = { interval ~ ("," ~ interval)* }
 enum_constraint  = { "in" ~ "(" ~ literal ~ ("," ~ literal)* ~ ")" }
+// Quantum: resolution/unit per spec (e.g. "1/256 NM", "360/65536 °")
+quantum_spec = { "quantum" ~ string_literal }
 
 // --- Literals ---
 literal = { num | "true" | "false" | hex_literal | string_literal }

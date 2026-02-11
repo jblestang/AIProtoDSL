@@ -1,0 +1,269 @@
+Frame 5: Packet, 238 bytes on wire (1904 bits), 238 bytes captured (1904 bits)
+Ethernet II, Src: Cisco_fe:5f:c2 (bc:16:65:fe:5f:c2), Dst: IPv4mcast_02:01:0d (01:00:5e:02:01:0d)
+Internet Protocol Version 4, Src: 10.17.58.184, Dst: 232.2.1.13
+User Datagram Protocol, Src Port: 21154, Dst Port: 22113
+ASTERIX packet, Category 048
+    Category: 48
+    Length: 185
+    Asterix message, #01, length: 18
+        FSPEC
+        010, Data Source Identifier
+            SAC, System Area Code: 0x19 (25)
+            SIC, System Identification Code: 0x0d (13)
+        140, Time of Day
+            Time of Day, [s]: 27336.2578125
+        020, Target Report Descriptor
+            000. .... = TYP: No detection (0)
+            ...0 .... = SIM: Actual target report (0)
+            .... 0... = RDP: Report from RDP Chain 1 (0)
+            .... .0.. = SPI: Absence of SPI (0)
+            .... ..0. = RAB: Report from aircraft transponder (0)
+            .... ...0 = FX: End of data item (0)
+        220, Aircraft Address
+            Aircraft Address: 0x44d074 (4509812)
+        161, Track Number
+            .... 0010 1101 1010 = TRN, Track Number: 730
+        170, Track Status
+            0... .... = CNF, Confirmed Vs. Tentative Track: Confirmed Track (0)
+            .10. .... = RAD, Type of Sensor(s) Maintaining Track: SSR/Mode S Track (2)
+            ...0 .... = DOU, Signals Level of Confidence in Plot to Track Association Process: Normal confidence (0)
+            .... 0... = MAH, Manoeuvre Detection in Horizontal Sense: No horizontal man.sensed (0)
+            .... .00. = CDM, Climbing / Descending Mode: Maintaining (0)
+            .... ...1 = FX: Extension into next extent (1)
+            1... .... = TRE, Signal for End_of_Track: End of track lifetime(last report for this track) (1)
+            .0.. .... = GHO, Ghost Vs. True Target: True target track (0)
+            ..0. .... = SUP, Track Maintained with Track Information from Neighbouring Node B on the Cluster, or Network: No (0)
+            ...0 .... = TCC, Type of Plot Coordinate Transformation Mechanism:: Tracking performed in so-called 'Radar Plane', i.e. neither slant range correction nor stereographical projection was applied (0)
+            .... ...0 = FX: End of data item (0)
+        230, Communications/ACAS Capability and Flight Status
+            001. .... = COM, Communications Capability of the Transponder: Comm. A and Comm. B capability (1)
+            ...0 00.. = STAT, Flight Status: No alert, no SPI, aircraft airborne (0)
+            .... ..0. = SI, SI/II Transponder Capability: SI-Code Capable (0)
+            1... .... = MSSC, Mode-S Specific Service Capability: Yes (1)
+            .1.. .... = ARC, Altitude Reporting Capability: 25 ft resolution (1)
+            ..1. .... = AIC, Aircraft Identification Capability: Yes (1)
+            ...1 .... = B1A, BDS 1,0 Bit 16: 1
+            .... 0101 = B1B, BDS 1,0 Bits 37/40: 5
+    Asterix message, #02, length: 60
+        FSPEC
+        010, Data Source Identifier
+            SAC, System Area Code: 0x19 (25)
+            SIC, System Identification Code: 0x0d (13)
+        140, Time of Day
+            Time of Day, [s]: 27356.046875
+        020, Target Report Descriptor
+            101. .... = TYP: Single ModeS Roll-Call (5)
+            ...0 .... = SIM: Actual target report (0)
+            .... 0... = RDP: Report from RDP Chain 1 (0)
+            .... .0.. = SPI: Absence of SPI (0)
+            .... ..0. = RAB: Report from aircraft transponder (0)
+            .... ...0 = FX: End of data item (0)
+        040, Measured Position in Polar Co-ordinates
+            RHO, [NM]: 43.30078125
+            THETA, [°]: 142.196044921875
+        070, Mode-3/A Code in Octal Representation
+            0... .... = V: Code validated (0)
+            .0.. .... = G: Default (0)
+            ..0. .... = L: Mode-3/A code derived from the reply of the transponder (0)
+            .... 0100 0001 1000 = MODE3A, Mode-3/A Reply in Octal Representation: 02030
+        090, Flight Level in Binary Representation
+            0... .... = V: Code validated (0)
+            .0.. .... = G: Default (0)
+            FL, [FL]: 360
+        130, Radar Plot Characteristics
+            FSPEC
+            SRL, SSR Plot Runlength
+                SSR Plot Runlength, [°]: 3.779296875
+            SRR, Number of Received Replies for (M)SSR
+                Number of Received Replies for (M)SSR: 12
+            SAM, Amplitude of (M)SSR Reply
+                Amplitude of (M)SSR Reply, [dBm]: -49
+        220, Aircraft Address
+            Aircraft Address: 0x4692d1 (4625105)
+        240, Aircraft Identification
+            Aircraft Identification: AEE2BR  
+        250, BDS Register Data
+            Counter: 2
+            250, BDS Register Data
+                MBDATA, Mode S Comm B Message Data: 0xc65000307c0000
+                0100 .... = BDS1, Comm B Data Buffer Store 1 Address: 4
+                .... 0000 = BDS2, Comm B Data Buffer Store 2 Address: 0
+            250, BDS Register Data
+                MBDATA, Mode S Comm B Message Data: 0xf009f72fa06402
+                0110 .... = BDS1, Comm B Data Buffer Store 1 Address: 6
+                .... 0000 = BDS2, Comm B Data Buffer Store 2 Address: 0
+        161, Track Number
+            .... 0010 1111 1001 = TRN, Track Number: 761
+        042, Calculated Position in Cartesian Co-ordinates
+            X, X-Component, [NM]: 26.546875
+            Y, X-Component, [NM]: -34.2109375
+        200, Calculated Track Velocity in Polar Co-ordinates
+            GSP, Calculated Groundspeed, [NM/s]: 0.122802734375
+            HDG, Calculated Heading, [°]: 317.4005126953125
+        170, Track Status
+            0... .... = CNF, Confirmed Vs. Tentative Track: Confirmed Track (0)
+            .10. .... = RAD, Type of Sensor(s) Maintaining Track: SSR/Mode S Track (2)
+            ...0 .... = DOU, Signals Level of Confidence in Plot to Track Association Process: Normal confidence (0)
+            .... 0... = MAH, Manoeuvre Detection in Horizontal Sense: No horizontal man.sensed (0)
+            .... .00. = CDM, Climbing / Descending Mode: Maintaining (0)
+            .... ...0 = FX: End of data item (0)
+        230, Communications/ACAS Capability and Flight Status
+            001. .... = COM, Communications Capability of the Transponder: Comm. A and Comm. B capability (1)
+            ...0 00.. = STAT, Flight Status: No alert, no SPI, aircraft airborne (0)
+            .... ..0. = SI, SI/II Transponder Capability: SI-Code Capable (0)
+            1... .... = MSSC, Mode-S Specific Service Capability: Yes (1)
+            .1.. .... = ARC, Altitude Reporting Capability: 25 ft resolution (1)
+            ..1. .... = AIC, Aircraft Identification Capability: Yes (1)
+            ...1 .... = B1A, BDS 1,0 Bit 16: 1
+            .... 1101 = B1B, BDS 1,0 Bits 37/40: 13
+    Asterix message, #03, length: 52
+        FSPEC
+        010, Data Source Identifier
+            SAC, System Area Code: 0x19 (25)
+            SIC, System Identification Code: 0x0d (13)
+        140, Time of Day
+            Time of Day, [s]: 27355.9765625
+        020, Target Report Descriptor
+            101. .... = TYP: Single ModeS Roll-Call (5)
+            ...0 .... = SIM: Actual target report (0)
+            .... 0... = RDP: Report from RDP Chain 1 (0)
+            .... .0.. = SPI: Absence of SPI (0)
+            .... ..0. = RAB: Report from aircraft transponder (0)
+            .... ...0 = FX: End of data item (0)
+        040, Measured Position in Polar Co-ordinates
+            RHO, [NM]: 99.82421875
+            THETA, [°]: 136.9775390625
+        070, Mode-3/A Code in Octal Representation
+            0... .... = V: Code validated (0)
+            .0.. .... = G: Default (0)
+            ..0. .... = L: Mode-3/A code derived from the reply of the transponder (0)
+            .... 1110 1010 1010 = MODE3A, Mode-3/A Reply in Octal Representation: 07252
+        090, Flight Level in Binary Representation
+            0... .... = V: Code validated (0)
+            .0.. .... = G: Default (0)
+            FL, [FL]: 360
+        130, Radar Plot Characteristics
+            FSPEC
+            SRL, SSR Plot Runlength
+                SSR Plot Runlength, [°]: 3.779296875
+            SRR, Number of Received Replies for (M)SSR
+                Number of Received Replies for (M)SSR: 12
+            SAM, Amplitude of (M)SSR Reply
+                Amplitude of (M)SSR Reply, [dBm]: -62
+        220, Aircraft Address
+            Aircraft Address: 0x3c648a (3957898)
+        240, Aircraft Identification
+            Aircraft Identification: DLH695  
+        250, BDS Register Data
+            Counter: 1
+            250, BDS Register Data
+                MBDATA, Mode S Comm B Message Data: 0xc6500030b80000
+                0100 .... = BDS1, Comm B Data Buffer Store 1 Address: 4
+                .... 0000 = BDS2, Comm B Data Buffer Store 2 Address: 0
+        161, Track Number
+            .... 0101 1001 1011 = TRN, Track Number: 1435
+        042, Calculated Position in Cartesian Co-ordinates
+            X, X-Component, [NM]: 68.125
+            Y, X-Component, [NM]: -72.96875
+        200, Calculated Track Velocity in Polar Co-ordinates
+            GSP, Calculated Groundspeed, [NM/s]: 0.124755859375
+            HDG, Calculated Heading, [°]: 319.2132568359375
+        170, Track Status
+            0... .... = CNF, Confirmed Vs. Tentative Track: Confirmed Track (0)
+            .10. .... = RAD, Type of Sensor(s) Maintaining Track: SSR/Mode S Track (2)
+            ...0 .... = DOU, Signals Level of Confidence in Plot to Track Association Process: Normal confidence (0)
+            .... 0... = MAH, Manoeuvre Detection in Horizontal Sense: No horizontal man.sensed (0)
+            .... .00. = CDM, Climbing / Descending Mode: Maintaining (0)
+            .... ...0 = FX: End of data item (0)
+        230, Communications/ACAS Capability and Flight Status
+            001. .... = COM, Communications Capability of the Transponder: Comm. A and Comm. B capability (1)
+            ...0 00.. = STAT, Flight Status: No alert, no SPI, aircraft airborne (0)
+            .... ..0. = SI, SI/II Transponder Capability: SI-Code Capable (0)
+            1... .... = MSSC, Mode-S Specific Service Capability: Yes (1)
+            .1.. .... = ARC, Altitude Reporting Capability: 25 ft resolution (1)
+            ..1. .... = AIC, Aircraft Identification Capability: Yes (1)
+            ...1 .... = B1A, BDS 1,0 Bit 16: 1
+            .... 0101 = B1B, BDS 1,0 Bits 37/40: 5
+    Asterix message, #04, length: 52
+        FSPEC
+        010, Data Source Identifier
+            SAC, System Area Code: 0x19 (25)
+            SIC, System Identification Code: 0x0d (13)
+        140, Time of Day
+            Time of Day, [s]: 27356.0234375
+        020, Target Report Descriptor
+            101. .... = TYP: Single ModeS Roll-Call (5)
+            ...0 .... = SIM: Actual target report (0)
+            .... 0... = RDP: Report from RDP Chain 1 (0)
+            .... .0.. = SPI: Absence of SPI (0)
+            .... ..0. = RAB: Report from aircraft transponder (0)
+            .... ...0 = FX: End of data item (0)
+        040, Measured Position in Polar Co-ordinates
+            RHO, [NM]: 109.6328125
+            THETA, [°]: 140.811767578125
+        070, Mode-3/A Code in Octal Representation
+            0... .... = V: Code validated (0)
+            .0.. .... = G: Default (0)
+            ..0. .... = L: Mode-3/A code derived from the reply of the transponder (0)
+            .... 1001 1110 0101 = MODE3A, Mode-3/A Reply in Octal Representation: 04745
+        090, Flight Level in Binary Representation
+            0... .... = V: Code validated (0)
+            .0.. .... = G: Default (0)
+            FL, [FL]: 400
+        130, Radar Plot Characteristics
+            FSPEC
+            SRL, SSR Plot Runlength
+                SSR Plot Runlength, [°]: 4.39453125
+            SRR, Number of Received Replies for (M)SSR
+                Number of Received Replies for (M)SSR: 12
+            SAM, Amplitude of (M)SSR Reply
+                Amplitude of (M)SSR Reply, [dBm]: -64
+        220, Aircraft Address
+            Aircraft Address: 0xa022a3 (10494627)
+        240, Aircraft Identification
+            Aircraft Identification: N108CE  
+        250, BDS Register Data
+            Counter: 1
+            250, BDS Register Data
+                MBDATA, Mode S Comm B Message Data: 0xf119e932600400
+                0110 .... = BDS1, Comm B Data Buffer Store 1 Address: 6
+                .... 0000 = BDS2, Comm B Data Buffer Store 2 Address: 0
+        161, Track Number
+            .... 0101 1001 0000 = TRN, Track Number: 1424
+        042, Calculated Position in Cartesian Co-ordinates
+            X, X-Component, [NM]: 69.2734375
+            Y, X-Component, [NM]: -84.9765625
+        200, Calculated Track Velocity in Polar Co-ordinates
+            GSP, Calculated Groundspeed, [NM/s]: 0.12371826171875
+            HDG, Calculated Heading, [°]: 318.4716796875
+        170, Track Status
+            0... .... = CNF, Confirmed Vs. Tentative Track: Confirmed Track (0)
+            .10. .... = RAD, Type of Sensor(s) Maintaining Track: SSR/Mode S Track (2)
+            ...0 .... = DOU, Signals Level of Confidence in Plot to Track Association Process: Normal confidence (0)
+            .... 0... = MAH, Manoeuvre Detection in Horizontal Sense: No horizontal man.sensed (0)
+            .... .00. = CDM, Climbing / Descending Mode: Maintaining (0)
+            .... ...0 = FX: End of data item (0)
+        230, Communications/ACAS Capability and Flight Status
+            001. .... = COM, Communications Capability of the Transponder: Comm. A and Comm. B capability (1)
+            ...0 00.. = STAT, Flight Status: No alert, no SPI, aircraft airborne (0)
+            .... ..0. = SI, SI/II Transponder Capability: SI-Code Capable (0)
+            1... .... = MSSC, Mode-S Specific Service Capability: Yes (1)
+            .1.. .... = ARC, Altitude Reporting Capability: 25 ft resolution (1)
+            ..1. .... = AIC, Aircraft Identification Capability: Yes (1)
+            ...1 .... = B1A, BDS 1,0 Bit 16: 1
+            .... 0110 = B1B, BDS 1,0 Bits 37/40: 6
+ASTERIX packet, Category 034
+    Category: 34
+    Length: 11
+    Asterix message, #01, length: 8
+        FSPEC
+        010, Data Source Identifier
+            SAC, System Area Code: 0x19 (25)
+            SIC, System Identification Code: 0x0d (13)
+        000, Message Type
+            Message Type: Sector crossing message (2)
+        030, Time of Day
+            Time of Day, [s]: 27356.109375
+        020, Sector Number
+            Sector Number, [°]: 146.25
+

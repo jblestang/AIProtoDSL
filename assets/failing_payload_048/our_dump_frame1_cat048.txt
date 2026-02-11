@@ -1,0 +1,6 @@
+=== packet 1  udp_offset 0  block cat 48  len 48 ===
+  data (offset 0 = first byte of record, after 3-byte transport):
+  offset   0: fd f7 02 19 c9 35 6d 4d a0 c5 af f1 e0 02 00 05
+  offset  16: 28 3c 66 0c 10 c2 36 d4 18 20 01 c0 78 00 31 bc
+  offset  32: 00 00 40 0d eb 07 b9 58 2e 41 00 20 f5
+  record bytes [3-48]  REMOVED: Validation: field i048_161: Validation: TrackNumber.spare: IO: failed to fill whole buffer

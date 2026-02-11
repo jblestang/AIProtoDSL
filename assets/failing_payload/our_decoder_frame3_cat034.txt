@@ -1,0 +1,2 @@
+=== packet 3  udp_offset 55  block cat 34  len 11 ===
+  record bytes [3-11]  REMOVED: Validation: field i034_090: Validation: CollimationError.rng: IO: failed to fill whole buffer

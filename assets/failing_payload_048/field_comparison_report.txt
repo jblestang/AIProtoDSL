@@ -1,0 +1,84 @@
+==================================================================================
+CAT048 frame 1: field-by-field comparison — our decoder vs Wireshark (tshark)
+==================================================================================
+
+--- Block ---
+  Block length: 48 bytes (from pcap)
+  FSPEC (hex): fd f7 02  (3 byte(s))
+  I048/130 present (FSPEC bit 6): 0  (130 absent per FSPEC)
+  Data bytes (after FSPEC): 42
+
+--- Wireshark field order (from tshark -O asterix) ---
+  I048/010
+  I048/140
+  I048/020
+  I048/040
+  I048/070
+  I048/090
+  I048/220
+  I048/240
+  I048/250
+  I048/250
+  I048/161
+  I048/200
+  I048/170
+  I048/230
+
+--- Our decoder (current behaviour) ---
+  Status: REMOVED (record not decoded)
+  Reason: REMOVED: Validation: field i048_161: Validation: TrackNumber.spare: IO: failed to fill whole buffer
+  Expected (if we decode per FSPEC): 130 absent.
+
+--- Consistency (our *expected* layout vs Wireshark) ---
+  All fields consistent with Wireshark up to the end of compared data.
+
+--- Byte layout (data = after FSPEC) ---
+  Offset  | We (expected) | Wireshark
+  --------|----------------|----------
+   0      | I048/010        | I048/010   
+   1      | I048/010        | I048/010   
+   2      | I048/140        | I048/140   
+   3      | I048/140        | I048/140   
+   4      | I048/140        | I048/140   
+   5      | I048/020        | I048/020   
+   6      | I048/040        | I048/040   
+   7      | I048/040        | I048/040   
+   8      | I048/040        | I048/040   
+   9      | I048/040        | I048/040   
+  10      | I048/070        | I048/070   
+  11      | I048/070        | I048/070   
+  12      | I048/090        | I048/090   
+  13      | I048/090        | I048/090   
+  14      | I048/220        | I048/220   
+  15      | I048/220        | I048/220   
+  16      | I048/220        | I048/220   
+  17      | I048/240        | I048/240   
+  18      | I048/240        | I048/240   
+  19      | I048/240        | I048/240   
+  20      | I048/240        | I048/240   
+  21      | I048/240        | I048/240   
+  22      | I048/240        | I048/240   
+  23      | I048/240        | I048/240   
+  24      | I048/240        | I048/240   
+  25      | I048/250        | I048/250   
+  26      | I048/250        | I048/250   
+  27      | I048/250        | I048/250   
+  28      | I048/250        | I048/250   
+  29      | I048/250        | I048/250   
+  30      | I048/250        | I048/250   
+  31      | I048/250        | I048/250   
+  32      | I048/250        | I048/250   
+  33      | I048/250        | I048/250   
+  34      | I048/161        | I048/161   
+  35      | I048/161        | I048/161   
+  36      | I048/.          | I048/200     <-- DIFF
+  37      | I048/.          | I048/200     <-- DIFF
+  38      | I048/.          | I048/200     <-- DIFF
+  39      | I048/.          | I048/200     <-- DIFF
+  40      | I048/.          | I048/170     <-- DIFF
+  41      | I048/.          | I048/170     <-- DIFF
+
+--- Files ---
+  Tshark full dump: assets/failing_payload_048/tshark_asterix_frame1.txt
+  Our dump:         assets/failing_payload_048/our_dump_frame1_cat048.txt
+

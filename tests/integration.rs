@@ -511,7 +511,7 @@ fn test_asterix_pcap_vs_wireshark_consistency() {
 #[test]
 fn test_dsl_lint_tabs_and_one_field_per_line() {
     // Compliant: tabs only, one field per line
-    let ok = "transport {\n\tx: u8;\n\ty: u16;\n\t}\n";
+    let ok = "transport {\n\tx: u8;\n\ty: u16;\n}\n";
     let msgs = lint(ok);
     let errors: Vec<_> = msgs.iter().filter(|m| m.severity == Severity::Error).collect();
     assert!(errors.is_empty(), "compliant source should have no lint errors: {:?}", msgs);
@@ -526,7 +526,7 @@ fn test_dsl_lint_tabs_and_one_field_per_line() {
     );
 
     // Two fields on one line -> OneFieldPerLine
-    let two_fields = "message M {\n\tx: u8; y: u16;\n\t}\n";
+    let two_fields = "message M {\n\tx: u8; y: u16;\n}\n";
     let msgs = lint(two_fields);
     assert!(
         msgs.iter().any(|m| m.rule == LintRule::OneFieldPerLine),

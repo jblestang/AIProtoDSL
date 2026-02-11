@@ -1,0 +1,2 @@
+=== packet 3  udp_offset 0  block cat 48  len 55 ===
+  record bytes [3-55]  REMOVED: Validation: field i048_042: Validation: CalculatedPositionCartesian.x: IO: failed to fill whole buffer

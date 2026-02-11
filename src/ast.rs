@@ -36,6 +36,8 @@ pub struct TypeDefField {
     pub optional: bool,
     /// Value constraint (e.g. [0..255]).
     pub constraint: Option<Constraint>,
+    /// Resolution/unit per spec (e.g. "1/256 NM").
+    pub quantum: Option<String>,
 }
 
 /// Abstract type (ASN.1-like): describes the logical type, not the wire encoding.
@@ -96,6 +98,8 @@ pub struct TransportField {
     pub type_spec: TransportTypeSpec,
     pub default: Option<Literal>,
     pub constraint: Option<Constraint>,
+    /// Resolution/unit per spec (e.g. "1/256 NM").
+    pub quantum: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -121,6 +125,8 @@ pub struct MessageField {
     pub default: Option<Literal>,
     pub constraint: Option<Constraint>,
     pub condition: Option<Condition>,
+    /// Resolution/unit per spec (e.g. "1/256 NM").
+    pub quantum: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -136,6 +142,8 @@ pub struct StructField {
     pub default: Option<Literal>,
     pub constraint: Option<Constraint>,
     pub condition: Option<Condition>,
+    /// Resolution/unit per spec (e.g. "1/256 NM").
+    pub quantum: Option<String>,
 }
 
 #[derive(Debug, Clone)]

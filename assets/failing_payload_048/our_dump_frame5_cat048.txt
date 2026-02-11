@@ -1,0 +1,50 @@
+=== packet 5  udp_offset 0  block cat 48  len 185 ===
+  record bytes [3-20]  DECODED Cat048Record
+    fspec: hex(e1 93 02)
+    i048_010: struct {
+        sac: 25
+        sic: 13
+      }
+    i048_020: struct {
+        rab: 0
+        rdp: 0
+        sim: 0
+        spare_fx: <padding>
+        spi: 0
+        typ: 0
+      }
+    i048_030: []
+    i048_040: []
+    i048_042: []
+    i048_050: []
+    i048_055: []
+    i048_060: []
+    i048_065: []
+    i048_070: []
+    i048_080: []
+    i048_090: []
+    i048_100: []
+    i048_110: []
+    i048_120: []
+    i048_130: []
+    i048_140: struct {
+        tod: 3499041
+      }
+    i048_161: struct {
+        spare: <padding>
+        trn: 3488
+      }
+    i048_170: struct {
+        cdm: 2
+        cnf: 1
+        dou: 0
+        mah: 0
+        rad: 0
+        spare_fx: <padding>
+      }
+    i048_200: []
+    i048_210: []
+    i048_220: struct {
+        addr: 4509812
+      }
+    i048_230: struct {

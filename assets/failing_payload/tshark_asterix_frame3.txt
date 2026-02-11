@@ -1,0 +1,90 @@
+Frame 3: Packet, 108 bytes on wire (864 bits), 108 bytes captured (864 bits)
+Ethernet II, Src: Cisco_fe:5f:c2 (bc:16:65:fe:5f:c2), Dst: IPv4mcast_02:01:0d (01:00:5e:02:01:0d)
+Internet Protocol Version 4, Src: 10.17.58.184, Dst: 232.2.1.13
+User Datagram Protocol, Src Port: 21154, Dst Port: 22113
+ASTERIX packet, Category 048
+    Category: 48
+    Length: 55
+    Asterix message, #01, length: 52
+        FSPEC
+        010, Data Source Identifier
+            SAC, System Area Code: 0x19 (25)
+            SIC, System Identification Code: 0x0d (13)
+        140, Time of Day
+            Time of Day, [s]: 27355.859375
+        020, Target Report Descriptor
+            101. .... = TYP: Single ModeS Roll-Call (5)
+            ...0 .... = SIM: Actual target report (0)
+            .... 0... = RDP: Report from RDP Chain 1 (0)
+            .... .0.. = SPI: Absence of SPI (0)
+            .... ..0. = RAB: Report from aircraft transponder (0)
+            .... ...0 = FX: End of data item (0)
+        040, Measured Position in Polar Co-ordinates
+            RHO, [NM]: 194.82421875
+            THETA, [°]: 128.759765625
+        070, Mode-3/A Code in Octal Representation
+            0... .... = V: Code validated (0)
+            .0.. .... = G: Default (0)
+            ..0. .... = L: Mode-3/A code derived from the reply of the transponder (0)
+            .... 0100 1100 0011 = MODE3A, Mode-3/A Reply in Octal Representation: 02303
+        090, Flight Level in Binary Representation
+            0... .... = V: Code validated (0)
+            .0.. .... = G: Default (0)
+            FL, [FL]: 360
+        130, Radar Plot Characteristics
+            FSPEC
+            SRL, SSR Plot Runlength
+                SSR Plot Runlength, [°]: 3.779296875
+            SRR, Number of Received Replies for (M)SSR
+                Number of Received Replies for (M)SSR: 11
+            SAM, Amplitude of (M)SSR Reply
+                Amplitude of (M)SSR Reply, [dBm]: -72
+        220, Aircraft Address
+            Aircraft Address: 0x4baacd (4958925)
+        240, Aircraft Identification
+            Aircraft Identification: THY9TX  
+        250, BDS Register Data
+            Counter: 1
+            250, BDS Register Data
+                MBDATA, Mode S Comm B Message Data: 0xc65632b0a80000
+                0100 .... = BDS1, Comm B Data Buffer Store 1 Address: 4
+                .... 0000 = BDS2, Comm B Data Buffer Store 2 Address: 0
+        161, Track Number
+            .... 0001 1110 0010 = TRN, Track Number: 482
+        042, Calculated Position in Cartesian Co-ordinates
+            X, X-Component, [NM]: 151.921875
+            Y, X-Component, [NM]: -121.96875
+        200, Calculated Track Velocity in Polar Co-ordinates
+            GSP, Calculated Groundspeed, [NM/s]: 0.1268310546875
+            HDG, Calculated Heading, [°]: 263.6004638671875
+        170, Track Status
+            0... .... = CNF, Confirmed Vs. Tentative Track: Confirmed Track (0)
+            .10. .... = RAD, Type of Sensor(s) Maintaining Track: SSR/Mode S Track (2)
+            ...0 .... = DOU, Signals Level of Confidence in Plot to Track Association Process: Normal confidence (0)
+            .... 0... = MAH, Manoeuvre Detection in Horizontal Sense: No horizontal man.sensed (0)
+            .... .00. = CDM, Climbing / Descending Mode: Maintaining (0)
+            .... ...0 = FX: End of data item (0)
+        230, Communications/ACAS Capability and Flight Status
+            001. .... = COM, Communications Capability of the Transponder: Comm. A and Comm. B capability (1)
+            ...0 00.. = STAT, Flight Status: No alert, no SPI, aircraft airborne (0)
+            .... ..0. = SI, SI/II Transponder Capability: SI-Code Capable (0)
+            1... .... = MSSC, Mode-S Specific Service Capability: Yes (1)
+            .1.. .... = ARC, Altitude Reporting Capability: 25 ft resolution (1)
+            ..1. .... = AIC, Aircraft Identification Capability: Yes (1)
+            ...1 .... = B1A, BDS 1,0 Bit 16: 1
+            .... 0101 = B1B, BDS 1,0 Bits 37/40: 5
+ASTERIX packet, Category 034
+    Category: 34
+    Length: 11
+    Asterix message, #01, length: 8
+        FSPEC
+        010, Data Source Identifier
+            SAC, System Area Code: 0x19 (25)
+            SIC, System Identification Code: 0x0d (13)
+        000, Message Type
+            Message Type: Sector crossing message (2)
+        030, Time of Day
+            Time of Day, [s]: 27355.953125
+        020, Sector Number
+            Sector Number, [°]: 135
+

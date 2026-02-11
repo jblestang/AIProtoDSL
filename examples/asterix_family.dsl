@@ -1,14 +1,24 @@
+// ASTERIX family (CAT 001, 002, 034, 048, 240) — Messages, structs, fields and enumerations
+// are defined per EUROCONTROL ASTERIX specifications. Reference (PDFs):
+//   https://eurocontrol.int/publication/cat001-eurocontrol-standard-document-radar-data-exchange-part-2a
+//   https://eurocontrol.int/publication/cat002-eurocontrol-standard-document-radar-data-exchange-part-2b
+//   https://eurocontrol.int/publication/cat034-eurocontrol-specification-surveillance-data-exchange-part-2b
+//   https://eurocontrol.int/publication/cat048-eurocontrol-specification-surveillance-data-exchange-asterix-part-4-category-48
+//   https://eurocontrol.int/publication/cat240-eurocontrol-specification-surveillance-data-exchange-asterix
+// See docs/asterix_eurocontrol_references.md for a table and direct PDF links.
+
 transport {
 	category: u8 [0..255];
 	length: u16 [0..65535];
-	}
+}
 
 
 
+// Payload: record types per category selector (EUROCONTROL CAT 001/002/034/048/240).
 payload {
 	messages: Cat001Record, Cat002Record, Cat034Record, Cat048Record, Cat240Record;
 	selector: category -> 1: list<Cat001Record>, 2: list<Cat002Record>, 34: list<Cat034Record>, 48: list<Cat048Record>, 240: list<Cat240Record>;
-	}
+}
 
 
 
@@ -16,13 +26,14 @@ payload {
 
 
 
+// Enumerations: value sets per EUROCONTROL spec (message type codes, etc.).
 enum Cat034MessageType {
 	NorthMarker = 1;
 	SectorCrossing = 2;
 	GeographicalFiltering = 3;
 	JammingStrobe = 4;
 	SolarStorm = 5;
-	}
+}
 
 enum Cat002MessageType {
 	NorthMarker = 1;
@@ -30,14 +41,16 @@ enum Cat002MessageType {
 	SouthMarker = 3;
 	ActivationOfBlindZoneFiltering = 8;
 	StopOfBlindZoneFiltering = 9;
-	}
+}
 
 
 
+// Abstract types (logical model) and encoding structs below follow EUROCONTROL data items
+// (e.g. I048/010 Data Source Identifier, I048/040 Measured Position). Fields map to spec subfields.
 type DataSourceId {
 	sac: integer [0..255];
 	sic: integer [0..255];
-	}
+}
 
 type TargetReportDescriptor001 {
 	typ: integer [0..1];
@@ -46,7 +59,7 @@ type TargetReportDescriptor001 {
 	ant: integer [0..1];
 	spi: integer [0..1];
 	rab: integer [0..1];
-	}
+}
 
 type TargetReportDescriptor048 {
 	typ: integer [0..7];
@@ -54,38 +67,38 @@ type TargetReportDescriptor048 {
 	rdp: integer [0..1];
 	spi: integer [0..1];
 	rab: integer [0..1];
-	}
+}
 
 type MeasuredPositionPolar {
-	rho: integer [0..65535];
-	theta: integer [0..65535];
-	}
+	rho: integer [0..65535] quantum "1/256 NM";
+	theta: integer [0..65535] quantum "360/65536 °";
+}
 
 type CalculatedPositionCartesian {
-	x: integer [-32768..32767];
-	y: integer [-32768..32767];
-	}
+	x: integer [-32768..32767] quantum "1/128 NM";
+	y: integer [-32768..32767] quantum "1/128 NM";
+}
 
 type Mode2Code {
 	v: integer [0..1];
 	g: integer [0..1];
 	l: integer [0..1];
 	mode2: integer [0..4095];
-	}
+}
 
 type Mode1Code {
 	v: integer [0..1];
 	g: integer [0..1];
 	l: integer [0..1];
 	mode1: integer [0..31];
-	}
+}
 
 type Mode3ACode {
 	v: integer [0..1];
 	g: integer [0..1];
 	l: integer [0..1];
 	mode3a: integer [0..4095];
-	}
+}
 
 type Mode2Confidence {
 	qa4: integer [0..1];
@@ -100,7 +113,7 @@ type Mode2Confidence {
 	qd4: integer [0..1];
 	qd2: integer [0..1];
 	qd1: integer [0..1];
-	}
+}
 
 type Mode1Confidence {
 	qa4: integer [0..1];
@@ -108,7 +121,7 @@ type Mode1Confidence {
 	qa1: integer [0..1];
 	qb2: integer [0..1];
 	qb1: integer [0..1];
-	}
+}
 
 type Mode3AConfidence {
 	qa4: integer [0..1];
@@ -123,13 +136,13 @@ type Mode3AConfidence {
 	qd4: integer [0..1];
 	qd2: integer [0..1];
 	qd1: integer [0..1];
-	}
+}
 
 type FlightLevel {
 	v: integer [0..1];
 	g: integer [0..1];
 	fl: integer [0..16383];
-	}
+}
 
 type ModeCCodeConfidence {
 	v: integer [0..1];
@@ -147,15 +160,15 @@ type ModeCCodeConfidence {
 	qd2: integer [0..1];
 	qb4: integer [0..1];
 	qd4: integer [0..1];
-	}
+}
 
 type TimeOfDay24 {
 	tod: integer [0..16777215];
-	}
+}
 
 type TrackNumber {
 	trn: integer [0..4095];
-	}
+}
 
 type TrackStatus001 {
 	con: integer [0..1];
@@ -164,7 +177,7 @@ type TrackStatus001 {
 	dou: integer [0..1];
 	rdpc: integer [0..1];
 	gho: integer [0..1];
-	}
+}
 
 type TrackStatus048 {
 	cnf: integer [0..1];
@@ -172,22 +185,22 @@ type TrackStatus048 {
 	dou: integer [0..1];
 	mah: integer [0..1];
 	cdm: integer [0..3];
-	}
+}
 
 type TrackVelocityPolar {
-	gsp: integer [0..65535];
-	hdg: integer [0..65535];
-	}
+	gsp: integer [0..65535] quantum "2^(-10) NM/s";
+	hdg: integer [0..65535] quantum "360/65536 °";
+}
 
 type TrackQuality {
 	sigx: integer [0..255];
 	sigy: integer [0..255];
-	}
+}
 
 
 type AircraftAddress048 {
 	addr: integer [0..16777215];
-	}
+}
 type CommunicationsAcas048 {
 	com: integer [0..7];
 	stat: integer [0..3];
@@ -197,20 +210,20 @@ type CommunicationsAcas048 {
 	aic: integer [0..1];
 	b1a: integer [0..1];
 	b1b: integer [0..7];
-	}
+}
 type AircraftIdentification048 {
 	chars: sequence of integer;
-	}
+}
 type BdsRegisterEntry {
 	mbdata: sequence of integer;
 	bds1: integer [0..15];
 	bds2: integer [0..15];
-	}
+}
 
 type DopplerSpeed {
 	d: integer [0..1];
 	cal: integer [-512..511];
-	}
+}
 
 
 type RadarPlotCharacteristics {
@@ -221,7 +234,7 @@ type RadarPlotCharacteristics {
 	pam: integer? [-128..127];
 	rpd: integer? [-128..127];
 	apd: integer? [-128..127];
-	}
+}
 
 type Com034 {
 	nogo: integer [0..1];
@@ -231,56 +244,57 @@ type Com034 {
 	ovlxmt: integer [0..1];
 	msc: integer [0..1];
 	tsv: integer [0..1];
-	}
+}
+
 type SystemConfig034 {
 	com: Com034?;
 	psr: integer? [0..255];
 	ssr: integer? [0..255];
 	mds: integer? [0..255];
-	}
+}
 
 type RdpXmt034 {
 	redrdp: integer [0..7];
 	redxmt: integer [0..7];
-	}
+}
 type SystemProcessingMode034 {
 	rdpxmt: RdpXmt034?;
-	}
+}
 
 type MessageCountEntry {
 	typ: integer [0..31];
 	count: integer [0..2047];
-	}
+}
 
 type CollimationError {
-	rng: integer [-128..127];
-	azm: integer [-128..127];
-	}
+	rng: integer [-128..127] quantum "1/256 NM";
+	azm: integer [-128..127] quantum "360/65536 °";
+}
 
 type PolarWindow {
-	rhost: integer [0..65535];
-	rhoend: integer [0..65535];
-	thetast: integer [0..65535];
-	thetaend: integer [0..65535];
-	}
+	rhost: integer [0..65535] quantum "1/256 NM";
+	rhoend: integer [0..65535] quantum "1/256 NM";
+	thetast: integer [0..65535] quantum "360/65536 °";
+	thetaend: integer [0..65535] quantum "360/65536 °";
+}
 
 type Position3D {
-	hgt: integer [-32768..32767];
-	lat: integer [-8388608..8388607];
-	lon: integer [-8388608..8388607];
-	}
+	hgt: integer [-32768..32767] quantum "1 ft";
+	lat: integer [-8388608..8388607] quantum "180/2^23 °";
+	lon: integer [-8388608..8388607] quantum "360/2^24 °";
+}
 
 type PlotCountValue {
 	typ: integer [0..31];
-	count: integer [0..2047];
-	}
+	count: integer [0..2047] quantum "1";
+}
 
 type DynamicWindow {
-	rhost: integer [0..65535];
-	rhoend: integer [0..65535];
-	thetast: integer [0..65535];
-	thetaend: integer [0..65535];
-	}
+	rhost: integer [0..65535] quantum "1/256 NM";
+	rhoend: integer [0..65535] quantum "1/256 NM";
+	thetast: integer [0..65535] quantum "360/65536 °";
+	thetaend: integer [0..65535] quantum "360/65536 °";
+}
 
 
 
@@ -303,7 +317,7 @@ type Cat001Record {
 	i001_170: TrackStatus001?;
 	i001_200: TrackVelocityPolar?;
 	i001_210: sequence of integer?;
-	}
+}
 
 type Cat002Record {
 	i002_010: DataSourceId?;
@@ -317,7 +331,7 @@ type Cat002Record {
 	i002_100: DynamicWindow?;
 	i002_090: CollimationError?;
 	i002_080: sequence of integer?;
-	}
+}
 
 type Cat034Record {
 	i034_010: DataSourceId?;
@@ -332,7 +346,7 @@ type Cat034Record {
 	i034_110: integer? [0..255];
 	i034_120: Position3D?;
 	i034_090: CollimationError?;
-	}
+}
 
 type Cat048Record {
 	i048_010: DataSourceId?;
@@ -363,11 +377,11 @@ type Cat048Record {
 	i048_060: Mode2Confidence?;
 	i048_sp: sequence of integer?;
 	i048_re: sequence of integer?;
-	}
+}
 
 type Cat240Record {
 	i240_010: DataSourceId?;
-	}
+}
 
 
 
@@ -375,6 +389,7 @@ type Cat240Record {
 
 
 
+// Messages: one per ASTERIX record type; FSPEC and optional items per spec.
 message Cat001Record {
 	fspec: fspec(24, 8) -> (
 	0: i001_010, 1: i001_020, 2: i001_040, 3: i001_042, 4: i001_030, 5: i001_050, 6: i001_070,
@@ -399,7 +414,7 @@ message Cat001Record {
 	i001_170: optional<TrackStatus001>;
 	i001_200: optional<TrackVelocityPolar>;
 	i001_210: optional<list<u8>>;
-	}
+}
 
 
 
@@ -419,7 +434,7 @@ message Cat002Record {
 	i002_100: optional<DynamicWindow>;
 	i002_090: optional<CollimationError>;
 	i002_080: optional<list<u8>>;
-	}
+}
 
 
 
@@ -441,7 +456,7 @@ message Cat034Record {
 	i034_110: optional<u8> [0..255];
 	i034_120: optional<Position3D>;
 	i034_090: optional<CollimationError>;
-	}
+}
 
 
 
@@ -480,20 +495,21 @@ message Cat048Record {
 	i048_060: optional<Mode2Confidence>;
 	i048_sp: optional<octets_fx>;
 	i048_re: optional<octets_fx>;
-	}
+}
 
 
 message Cat240Record {
 	fspec: fspec(8, 8) -> (0: i240_010);
 	i240_010: optional<DataSourceId>;
-	}
+}
 
 
 
+// Structs: encoding of data items (e.g. I048/010, I048/040); field names and types per EUROCONTROL spec.
 struct DataSourceId {
 	sac: u8 [0..255];
 	sic: u8 [0..255];
-	}
+}
 
 struct TargetReportDescriptor001 {
 	typ: bitfield(1) [0..1];
@@ -503,7 +519,7 @@ struct TargetReportDescriptor001 {
 	spi: bitfield(1) [0..1];
 	rab: bitfield(1) [0..1];
 	spare: padding_bits(1);
-	}
+}
 
 struct TargetReportDescriptor048 {
 	typ: bitfield(3) [0..7];
@@ -512,7 +528,7 @@ struct TargetReportDescriptor048 {
 	spi: bitfield(1) [0..1];
 	rab: bitfield(1) [0..1];
 	spare_fx: padding_bits(1);
-	}
+}
 
 struct TargetReportDescriptor048Ext {
 	tst: bitfield(1) [0..1];
@@ -522,17 +538,17 @@ struct TargetReportDescriptor048Ext {
 	mi: bitfield(1) [0..1];
 	foefri: bitfield(2) [0..3];
 	spare_fx2: padding_bits(1);
-	}
+}
 
 struct MeasuredPositionPolar {
-	rho: u16 [0..65535];
-	theta: u16 [0..65535];
-	}
+	rho: u16 [0..65535] quantum "1/256 NM";
+	theta: u16 [0..65535] quantum "360/65536 °";
+}
 
 struct CalculatedPositionCartesian {
-	x: i16 [-32768..32767];
-	y: i16 [-32768..32767];
-	}
+	x: i16 [-32768..32767] quantum "1/128 NM";
+	y: i16 [-32768..32767] quantum "1/128 NM";
+}
 
 struct Mode2Code {
 	v: bitfield(1) [0..1];
@@ -540,14 +556,14 @@ struct Mode2Code {
 	l: bitfield(1) [0..1];
 	spare: padding_bits(1);
 	mode2: u16(12) [0..4095];
-	}
+}
 
 struct Mode1Code {
 	v: bitfield(1) [0..1];
 	g: bitfield(1) [0..1];
 	l: bitfield(1) [0..1];
 	mode1: u8(5) [0..31];
-	}
+}
 
 struct Mode3ACode {
 	v: bitfield(1) [0..1];
@@ -555,7 +571,7 @@ struct Mode3ACode {
 	l: bitfield(1) [0..1];
 	spare: padding_bits(1);
 	mode3a: u16(12) [0..4095];
-	}
+}
 
 struct Mode2Confidence {
 	spare: padding_bits(4);
@@ -572,7 +588,7 @@ struct Mode2Confidence {
 	qd2: bitfield(1) [0..1];
 	qd1: bitfield(1) [0..1];
 
-	}
+}
 
 struct Mode1Confidence {
 	spare: padding_bits(3);
@@ -582,7 +598,7 @@ struct Mode1Confidence {
 	qb2: bitfield(1) [0..1];
 	qb1: bitfield(1) [0..1];
 
-	}
+}
 
 struct Mode3AConfidence {
 	spare: padding_bits(4);
@@ -599,13 +615,13 @@ struct Mode3AConfidence {
 	qd2: bitfield(1) [0..1];
 	qd1: bitfield(1) [0..1];
 
-	}
+}
 
 struct FlightLevel {
 	v: bitfield(1) [0..1];
 	g: bitfield(1) [0..1];
-	fl: u16(14) [0..16383];
-	}
+	fl: u16(14) [0..16383] quantum "0.25 FL";
+}
 
 struct ModeCCodeConfidence {
 	v: bitfield(1) [0..1];
@@ -626,16 +642,16 @@ struct ModeCCodeConfidence {
 	qb4: bitfield(1) [0..1];
 	qd4: bitfield(1) [0..1];
 
-	}
+}
 
 struct TimeOfDay24 {
 	tod: u32(24) [0..16777215];
-	}
+}
 
 struct TrackNumber {
 	spare: padding_bits(4);
 	trn: u16(12) [0..4095];
-	}
+}
 
 struct TrackStatus001 {
 	con: bitfield(1) [0..1];
@@ -647,7 +663,7 @@ struct TrackStatus001 {
 	gho: bitfield(1) [0..1];
 	spare2: padding_bits(1);
 
-	}
+}
 
 struct TrackStatus048 {
 	cnf: bitfield(1) [0..1];
@@ -657,7 +673,7 @@ struct TrackStatus048 {
 	cdm: bitfield(2) [0..3];
 	fspec: fspec(1, 0) -> (0: ext);
 	ext: optional<TrackStatus048Ext>;
-	}
+}
 
 struct TrackStatus048Ext {
 	tre: bitfield(1) [0..1];
@@ -667,22 +683,22 @@ struct TrackStatus048Ext {
 	spare: padding_bits(3);
 	spare2: padding_bits(1);
 
-	}
+}
 
 struct TrackVelocityPolar {
-	gsp: u16 [0..65535];
-	hdg: u16 [0..65535];
-	}
+	gsp: u16 [0..65535] quantum "2^(-10) NM/s";
+	hdg: u16 [0..65535] quantum "360/65536 °";
+}
 
 struct TrackQuality {
 	sigx: u8 [0..255];
 	sigy: u8 [0..255];
-	}
+}
 
 
 struct AircraftAddress048 {
 	addr: u32(24) [0..16777215];
-	}
+}
 
 struct CommunicationsAcas048 {
 	com: bitfield(3) [0..7];
@@ -695,7 +711,7 @@ struct CommunicationsAcas048 {
 	b1a: bitfield(1) [0..1];
 	b1b: bitfield(3) [0..7];
 	spare2: padding_bits(2);
-	}
+}
 
 struct AircraftIdentification048 {
 	c: u8(6) [0..63];
@@ -706,7 +722,7 @@ struct AircraftIdentification048 {
 	c6: u8(6) [0..63];
 	c7: u8(6) [0..63];
 	c8: u8(6) [0..63];
-	}
+}
 
 struct BdsRegisterEntry {
 	mbdata: u8 [0..255];
@@ -718,13 +734,13 @@ struct BdsRegisterEntry {
 	mbdata7: u8 [0..255];
 	bds1: u8(4) [0..15];
 	bds2: u8(4) [0..15];
-	}
+}
 
 struct DopplerSpeed {
 	d: bitfield(1) [0..1];
 	spare: padding_bits(5);
 	cal: i16(10) [-512..511];
-	}
+}
 
 
 struct RadarPlotCharacteristics {
@@ -736,7 +752,7 @@ struct RadarPlotCharacteristics {
 	pam: optional<i8> [-128..127];
 	rpd: optional<i8> [-128..127];
 	apd: optional<i8> [-128..127];
-	}
+}
 
 
 struct Com034 {
@@ -748,7 +764,7 @@ struct Com034 {
 	msc: bitfield(1) [0..1];
 	tsv: bitfield(1) [0..1];
 	spare: padding_bits(1);
-	}
+}
 
 struct SystemConfig034 {
 	fspec: fspec(8, 8) -> (0: com, 1: psr, 2: ssr, 3: mds);
@@ -756,7 +772,7 @@ struct SystemConfig034 {
 	psr: optional<u8> [0..255];
 	ssr: optional<u8> [0..255];
 	mds: optional<u8> [0..255];
-	}
+}
 
 
 struct RdpXmt034 {
@@ -764,45 +780,45 @@ struct RdpXmt034 {
 	redrdp: u8(3) [0..7];
 	redxmt: u8(3) [0..7];
 	spare2: padding_bits(1);
-	}
+}
 struct SystemProcessingMode034 {
 	fspec: fspec(8, 8) -> (0: rdpxmt);
 	rdpxmt: optional<RdpXmt034>;
-	}
+}
 
 struct MessageCountEntry {
 	typ: bitfield(5) [0..31];
 	count: u16(11) [0..2047];
-	}
+}
 
 struct CollimationError {
-	rng: i8 [-128..127];
-	azm: i8 [-128..127];
-	}
+	rng: i8 [-128..127] quantum "1/256 NM";
+	azm: i8 [-128..127] quantum "360/65536 °";
+}
 
 
 struct PlotCountValue {
 	typ: bitfield(5) [0..31];
-	count: u16(11) [0..2047];
-	}
+	count: u16(11) [0..2047] quantum "1";
+}
 
 
 struct DynamicWindow {
-	rhost: u16 [0..65535];
-	rhoend: u16 [0..65535];
-	thetast: u16 [0..65535];
-	thetaend: u16 [0..65535];
-	}
+	rhost: u16 [0..65535] quantum "1/256 NM";
+	rhoend: u16 [0..65535] quantum "1/256 NM";
+	thetast: u16 [0..65535] quantum "360/65536 °";
+	thetaend: u16 [0..65535] quantum "360/65536 °";
+}
 
 struct PolarWindow {
-	rhost: u16 [0..65535];
-	rhoend: u16 [0..65535];
-	thetast: u16 [0..65535];
-	thetaend: u16 [0..65535];
-	}
+	rhost: u16 [0..65535] quantum "1/256 NM";
+	rhoend: u16 [0..65535] quantum "1/256 NM";
+	thetast: u16 [0..65535] quantum "360/65536 °";
+	thetaend: u16 [0..65535] quantum "360/65536 °";
+}
 
 struct Position3D {
-	hgt: i16 [-32768..32767];
-	lat: i32(24) [-8388608..8388607];
-	lon: i32(24) [-8388608..8388607];
-	}
+	hgt: i16 [-32768..32767] quantum "1 ft";
+	lat: i32(24) [-8388608..8388607] quantum "180/2^23 °";
+	lon: i32(24) [-8388608..8388607] quantum "360/2^24 °";
+}

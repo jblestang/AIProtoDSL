@@ -1,0 +1,70 @@
+Frame 1: Packet, 90 bytes on wire (720 bits), 90 bytes captured (720 bits)
+Ethernet II, Src: Cisco_fe:5f:c2 (bc:16:65:fe:5f:c2), Dst: IPv4mcast_02:01:1f (01:00:5e:02:01:1f)
+Internet Protocol Version 4, Src: 10.17.58.184, Dst: 232.2.1.31
+User Datagram Protocol, Src Port: 21124, Dst Port: 22131
+ASTERIX packet, Category 048
+    Category: 48
+    Length: 48
+    Asterix message, #01, length: 45
+        FSPEC
+        010, Data Source Identifier
+            SAC, System Area Code: 0x19 (25)
+            SIC, System Identification Code: 0xc9 (201)
+        140, Time of Day
+            Time of Day, [s]: 27354.6015625
+        020, Target Report Descriptor
+            101. .... = TYP: Single ModeS Roll-Call (5)
+            ...0 .... = SIM: Actual target report (0)
+            .... 0... = RDP: Report from RDP Chain 1 (0)
+            .... .0.. = SPI: Absence of SPI (0)
+            .... ..0. = RAB: Report from aircraft transponder (0)
+            .... ...0 = FX: End of data item (0)
+        040, Measured Position in Polar Co-ordinates
+            RHO, [NM]: 197.68359375
+            THETA, [°]: 340.13671875
+        070, Mode-3/A Code in Octal Representation
+            0... .... = V: Code validated (0)
+            .0.. .... = G: Default (0)
+            ..0. .... = L: Mode-3/A code derived from the reply of the transponder (0)
+            .... 0010 0000 0000 = MODE3A, Mode-3/A Reply in Octal Representation: 01000
+        090, Flight Level in Binary Representation
+            0... .... = V: Code validated (0)
+            .0.. .... = G: Default (0)
+            FL, [FL]: 330
+        220, Aircraft Address
+            Aircraft Address: 0x3c660c (3958284)
+        240, Aircraft Identification
+            Aircraft Identification: DLH65A  
+        250, BDS Register Data
+            Counter: 1
+            250, BDS Register Data
+                MBDATA, Mode S Comm B Message Data: 0xc0780031bc0000
+                0100 .... = BDS1, Comm B Data Buffer Store 1 Address: 4
+                .... 0000 = BDS2, Comm B Data Buffer Store 2 Address: 0
+        161, Track Number
+            .... 1101 1110 1011 = TRN, Track Number: 3563
+        200, Calculated Track Velocity in Polar Co-ordinates
+            GSP, Calculated Groundspeed, [NM/s]: 0.12066650390625
+            HDG, Calculated Heading, [°]: 124.002685546875
+        170, Track Status
+            0... .... = CNF, Confirmed Vs. Tentative Track: Confirmed Track (0)
+            .10. .... = RAD, Type of Sensor(s) Maintaining Track: SSR/Mode S Track (2)
+            ...0 .... = DOU, Signals Level of Confidence in Plot to Track Association Process: Normal confidence (0)
+            .... 0... = MAH, Manoeuvre Detection in Horizontal Sense: No horizontal man.sensed (0)
+            .... .00. = CDM, Climbing / Descending Mode: Maintaining (0)
+            .... ...1 = FX: Extension into next extent (1)
+            0... .... = TRE, Signal for End_of_Track: Track still alive (0)
+            .0.. .... = GHO, Ghost Vs. True Target: True target track (0)
+            ..0. .... = SUP, Track Maintained with Track Information from Neighbouring Node B on the Cluster, or Network: No (0)
+            ...0 .... = TCC, Type of Plot Coordinate Transformation Mechanism:: Tracking performed in so-called 'Radar Plane', i.e. neither slant range correction nor stereographical projection was applied (0)
+            .... ...0 = FX: End of data item (0)
+        230, Communications/ACAS Capability and Flight Status
+            001. .... = COM, Communications Capability of the Transponder: Comm. A and Comm. B capability (1)
+            ...0 00.. = STAT, Flight Status: No alert, no SPI, aircraft airborne (0)
+            .... ..0. = SI, SI/II Transponder Capability: SI-Code Capable (0)
+            1... .... = MSSC, Mode-S Specific Service Capability: Yes (1)
+            .1.. .... = ARC, Altitude Reporting Capability: 25 ft resolution (1)
+            ..1. .... = AIC, Aircraft Identification Capability: Yes (1)
+            ...1 .... = B1A, BDS 1,0 Bit 16: 1
+            .... 0101 = B1B, BDS 1,0 Bits 37/40: 5
+

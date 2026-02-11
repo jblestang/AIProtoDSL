@@ -170,6 +170,7 @@ fn build_type_def_field(pair: pest::iterators::Pair<Rule>) -> Result<TypeDefFiel
     let mut abstract_type = None;
     let mut optional = false;
     let mut constraint = None;
+    let mut quantum = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::ident => {
@@ -180,6 +181,7 @@ fn build_type_def_field(pair: pest::iterators::Pair<Rule>) -> Result<TypeDefFiel
             Rule::abstract_type_spec => abstract_type = Some(build_abstract_type(inner)?),
             Rule::type_optional => optional = true,
             Rule::constraint => constraint = Some(build_constraint(inner)?),
+            Rule::quantum_spec => quantum = Some(parse_quantum_string(inner)?),
             _ => {}
         }
     }
@@ -188,6 +190,7 @@ fn build_type_def_field(pair: pest::iterators::Pair<Rule>) -> Result<TypeDefFiel
         abstract_type: abstract_type.ok_or("Missing abstract type in type field")?,
         optional,
         constraint,
+        quantum,
     })
 }
 
@@ -233,6 +236,7 @@ fn build_transport_field(
     let mut type_spec = None;
     let mut default = None;
     let mut constraint = None;
+    let mut quantum = None;
 
     for inner in pair.into_inner() {
         match inner.as_rule() {
@@ -240,6 +244,7 @@ fn build_transport_field(
             Rule::transport_type_spec => type_spec = Some(build_transport_type_spec(inner)?),
             Rule::literal => default = Some(parse_literal(inner.as_str())),
             Rule::constraint => constraint = Some(build_constraint(inner)?),
+            Rule::quantum_spec => quantum = Some(parse_quantum_string(inner)?),
             _ => {}
         }
     }
@@ -249,6 +254,7 @@ fn build_transport_field(
         type_spec: type_spec.ok_or("Missing type in transport field")?,
         default,
         constraint,
+        quantum,
     })
 }
 
@@ -300,12 +306,13 @@ fn build_message(pair: pest::iterators::Pair<Rule>) -> Result<MessageSection, St
 }
 
 fn build_message_field(pair: pest::iterators::Pair<Rule>) -> Result<MessageField, String> {
-    build_generic_field(pair, build_type_spec).map(|(name, type_spec, default, constraint, condition)| MessageField {
+    build_generic_field(pair, build_type_spec).map(|(name, type_spec, default, constraint, condition, quantum)| MessageField {
         name,
         type_spec,
         default,
         constraint,
         condition,
+        quantum,
     })
 }
 
@@ -323,19 +330,20 @@ fn build_struct(pair: pest::iterators::Pair<Rule>) -> Result<StructSection, Stri
 }
 
 fn build_struct_field(pair: pest::iterators::Pair<Rule>) -> Result<StructField, String> {
-    build_generic_field(pair, build_type_spec).map(|(name, type_spec, default, constraint, condition)| StructField {
+    build_generic_field(pair, build_type_spec).map(|(name, type_spec, default, constraint, condition, quantum)| StructField {
         name,
         type_spec,
         default,
         constraint,
         condition,
+        quantum,
     })
 }
 
 fn build_generic_field<F>(
     pair: pest::iterators::Pair<Rule>,
     type_builder: F,
-) -> Result<(String, TypeSpec, Option<Literal>, Option<Constraint>, Option<Condition>), String>
+) -> Result<(String, TypeSpec, Option<Literal>, Option<Constraint>, Option<Condition>, Option<String>), String>
 where
     F: FnOnce(pest::iterators::Pair<Rule>) -> Result<TypeSpec, String>,
 {
@@ -345,6 +353,7 @@ where
     let mut constraint = None;
     let mut cond_field = None;
     let mut cond_value = None;
+    let mut quantum = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::ident => {
@@ -363,12 +372,13 @@ where
                 }
             }
             Rule::constraint => constraint = Some(build_constraint(inner)?),
+            Rule::quantum_spec => quantum = Some(parse_quantum_string(inner)?),
             _ => {}
         }
     }
     let type_spec = type_builder(type_spec_pair.ok_or("Missing type in field")?)?;
     let condition = cond_field.zip(cond_value).map(|(field, value)| Condition { field, value });
-    Ok((name, type_spec, default, constraint, condition))
+    Ok((name, type_spec, default, constraint, condition, quantum))
 }
 
 fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String> {
@@ -567,6 +577,17 @@ fn build_constraint(pair: pest::iterators::Pair<Rule>) -> Result<Constraint, Str
             Ok(Constraint::Enum(literals))
         }
         _ => Err("Unknown constraint".to_string()),
+    }
+}
+
+fn parse_quantum_string(quantum_spec: pest::iterators::Pair<Rule>) -> Result<String, String> {
+    let lit = quantum_spec.into_inner().next().ok_or("quantum_spec: missing string_literal")?;
+    let s = lit.as_str();
+    if s.starts_with('"') && s.ends_with('"') {
+        let inner = &s[1..s.len() - 1];
+        Ok(inner.replace("\\\"", "\"").replace("\\n", "\n").replace("\\t", "\t"))
+    } else {
+        Ok(s.to_string())
     }
 }
 

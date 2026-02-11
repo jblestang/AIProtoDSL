@@ -76,10 +76,15 @@ pub fn lint(source: &str) -> Vec<LintMessage> {
             });
         }
 
-        // Depth: content lines (non-empty after trim) must have exactly `depth` tabs
+        // Depth: content lines (non-empty after trim) must have exactly `depth` tabs; closing `}` uses one less
         if !trimmed.is_empty() && !trimmed.starts_with("//") && !trimmed.starts_with("/*") {
             let tab_count = leading.chars().filter(|&c| c == '\t').count();
-            let expected = depth.max(0) as usize;
+            let content_for_depth = trimmed.find("//").map(|i| trimmed[..i].trim_end()).unwrap_or(trimmed);
+            let expected = if content_for_depth.trim_start().contains('}') {
+                (depth - 1).max(0) as usize
+            } else {
+                depth.max(0) as usize
+            };
             if tab_count != expected {
                 out.push(LintMessage {
                     line: line_no,
@@ -88,7 +93,7 @@ pub fn lint(source: &str) -> Vec<LintMessage> {
                     severity: Severity::Error,
                     message: format!(
                         "expected {} tab(s) at depth {} (found {})",
-                        expected, depth, tab_count
+                        expected, expected, tab_count
                     ),
                 });
             }
@@ -166,7 +171,8 @@ pub fn lint_fix(source: &str) -> String {
                 if s.is_empty() {
                     continue;
                 }
-                let indent = "\t".repeat(depth.max(0) as usize);
+                let line_depth = if s.contains('}') { (depth - 1).max(0) } else { depth.max(0) };
+                let indent = "\t".repeat(line_depth as usize);
                 let is_last = j == parts.len() - 1 || parts[j + 1..].iter().all(|p| p.trim().is_empty());
                 let suffix = if is_last && !comment_part.is_empty() {
                     format!(";{}", comment_part)
@@ -187,14 +193,21 @@ pub fn lint_fix(source: &str) -> String {
 
         // Closing brace and semicolon on same line: put } on its own line
         if content_no_comment.contains('}') && content_no_comment.contains(';') {
-            let indent = "\t".repeat(depth.max(0) as usize);
+            let comment_part = if trimmed_start.contains("//") {
+                let i = trimmed_start.find("//").unwrap();
+                format!("  {}", trimmed_start[i..].trim_start())
+            } else {
+                String::new()
+            };
+            let indent_in = "\t".repeat(depth.max(0) as usize);
+            let indent_out = "\t".repeat((depth - 1).max(0) as usize);
             if let Some(close) = content_no_comment.find('}') {
                 let before = content_no_comment[..close].trim();
                 let after = content_no_comment[close..].trim();
                 if !before.is_empty() {
-                    out_lines.push(format!("{}{};", indent, before));
+                    out_lines.push(format!("{}{};", indent_in, before));
                 }
-                out_lines.push(format!("{}{}", indent, after));
+                out_lines.push(format!("{}{}{}", indent_out, after, comment_part));
                 for c in content_no_comment.chars() {
                     match c {
                         '{' => depth += 1,
@@ -206,12 +219,24 @@ pub fn lint_fix(source: &str) -> String {
             }
         }
 
-        let expected_tabs = depth.max(0) as usize;
+        let expected_tabs = if content_no_comment.contains('}') {
+            (depth - 1).max(0) as usize
+        } else {
+            depth.max(0) as usize
+        };
         let indent = "\t".repeat(expected_tabs);
+        let comment_part = if trimmed_start.contains("//") {
+            let i = trimmed_start.find("//").unwrap();
+            format!("  {}", trimmed_start[i..].trim_start())
+        } else {
+            String::new()
+        };
         let content = if trimmed.is_empty() || trimmed_start.is_empty() {
             String::new()
+        } else if content_no_comment.is_empty() && trimmed_start.starts_with("//") {
+            format!("{}{}", indent, trimmed_start)
         } else {
-            format!("{}{}", indent, content_no_comment)
+            format!("{}{}{}", indent, content_no_comment, comment_part)
         };
         out_lines.push(content);
         for c in content_no_comment.chars() {
@@ -247,9 +272,20 @@ mod tests {
 
     #[test]
     fn lint_clean_tabs_passes() {
-        let src = "transport {\n\tx: u8;\n\t}\n";
+        let src = "transport {\n\tx: u8;\n}\n";
         let msgs = lint(src);
         let errors: Vec<_> = msgs.iter().filter(|m| m.severity == Severity::Error).collect();
         assert!(errors.is_empty(), "clean tab-indented source should have no errors: {:?}", msgs);
+    }
+
+    #[test]
+    fn lint_fix_preserves_comments() {
+        let src = "transport {\n\tx: u8;  // inline\n\t// comment only\n}\n";
+        let fixed = lint_fix(src);
+        assert!(fixed.contains("// inline"), "inline comment preserved: {:?}", fixed);
+        assert!(fixed.contains("// comment only"), "comment-only line preserved: {:?}", fixed);
+        let msgs = lint(&fixed);
+        let errors: Vec<_> = msgs.iter().filter(|m| m.severity == Severity::Error).collect();
+        assert!(errors.is_empty(), "fixed output should pass lint: {:?}", msgs);
     }
 }
