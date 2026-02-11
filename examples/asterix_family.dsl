@@ -391,7 +391,7 @@ type Cat240Record {
 
 // Messages: one per ASTERIX record type; FSPEC and optional items per spec.
 message Cat001Record {
-	fspec: fspec(24, 8) -> (
+	fspec: bitmap_presence(18, 7) -> (
 	0: i001_010, 1: i001_020, 2: i001_040, 3: i001_042, 4: i001_030, 5: i001_050, 6: i001_070,
 	7: i001_080, 8: i001_090, 9: i001_100, 10: i001_120, 11: i001_130, 12: i001_131, 13: i001_141,
 	14: i001_161, 15: i001_170, 16: i001_200, 17: i001_210
@@ -419,7 +419,7 @@ message Cat001Record {
 
 
 message Cat002Record {
-	fspec: fspec(16, 8) -> (
+	fspec: bitmap_presence(11, 7) -> (
 	0: i002_010, 1: i002_000, 2: i002_020, 3: i002_030, 4: i002_041, 5: i002_050, 6: i002_060,
 	7: i002_070, 8: i002_100, 9: i002_090, 10: i002_080
 	);
@@ -440,7 +440,7 @@ message Cat002Record {
 
 
 message Cat034Record {
-	fspec: fspec(16, 8) -> (
+	fspec: bitmap_presence(14, 7) -> (
 	0: i034_010, 1: i034_000, 2: i034_030, 3: i034_020, 4: i034_041, 5: i034_050, 6: i034_060,
 	7: i034_070, 8: i034_100, 9: i034_110, 10: i034_120, 11: i034_090
 	);
@@ -461,7 +461,7 @@ message Cat034Record {
 
 
 message Cat048Record {
-	fspec: fspec(32, 8) -> (
+	fspec: bitmap_presence(28, 7) -> (
 	0: i048_010, 1: i048_140, 2: i048_020, 3: i048_040, 4: i048_070, 5: i048_090, 6: i048_130,
 	7: i048_220, 8: i048_240, 9: i048_250, 10: i048_161, 11: i048_042, 12: i048_200, 13: i048_170,
 	14: i048_210, 15: i048_030, 16: i048_080, 17: i048_100, 18: i048_110, 19: i048_120, 20: i048_230,
@@ -499,7 +499,7 @@ message Cat048Record {
 
 
 message Cat240Record {
-	fspec: fspec(8, 8) -> (0: i240_010);
+	fspec: bitmap_presence(1, 7) -> (0: i240_010);
 	i240_010: optional<DataSourceId>;
 }
 
@@ -671,7 +671,7 @@ struct TrackStatus048 {
 	dou: bitfield(1) [0..1];
 	mah: bitfield(1) [0..1];
 	cdm: bitfield(2) [0..3];
-	fspec: fspec(1, 0) -> (0: ext);
+	fspec: bitmap_presence(1, 0) -> (0: ext);
 	ext: optional<TrackStatus048Ext>;
 }
 
@@ -744,7 +744,7 @@ struct DopplerSpeed {
 
 
 struct RadarPlotCharacteristics {
-	fspec: fspec(8, 8) -> (0: srl, 1: srr, 2: sam, 3: prl, 4: pam, 5: rpd, 6: apd);
+	fspec: bitmap_presence(7, 7) -> (0: srl, 1: srr, 2: sam, 3: prl, 4: pam, 5: rpd, 6: apd);
 	srl: optional<u8> [0..255];
 	srr: optional<u8> [0..255];
 	sam: optional<i8> [-128..127];
@@ -767,7 +767,7 @@ struct Com034 {
 }
 
 struct SystemConfig034 {
-	fspec: fspec(8, 8) -> (0: com, 1: psr, 2: ssr, 3: mds);
+	fspec: bitmap_presence(4, 7) -> (0: com, 1: psr, 2: ssr, 3: mds);
 	com: optional<Com034>;
 	psr: optional<u8> [0..255];
 	ssr: optional<u8> [0..255];
@@ -782,7 +782,7 @@ struct RdpXmt034 {
 	spare2: padding_bits(1);
 }
 struct SystemProcessingMode034 {
-	fspec: fspec(8, 8) -> (0: rdpxmt);
+	fspec: bitmap_presence(1, 7) -> (0: rdpxmt);
 	rdpxmt: optional<RdpXmt034>;
 }
 

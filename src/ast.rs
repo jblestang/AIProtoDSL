@@ -165,9 +165,10 @@ pub enum TypeSpec {
     CountOf(String),
     /// ASN.1-style presence bitmap: n bytes (1, 2, or 4). Following optional fields use bits 0, 1, 2, ...
     PresenceBits(u64),
-    /// FSPEC: fspec(N, n) = up to N bits. n=8 => 7 presence + 1 FX per byte; n=0 => no blocking (N consecutive presence bits).
-    /// Mapping lists (logical_index, field_name); no FX in mapping.
-    FspecWithMapping { max_bits: u32, bits_per_block: u32, mapping: Vec<(u32, String)> },
+    /// Bitmap presence: bitmap_presence(total_bits, presence_per_block). total_bits = number of presence bits (optionals).
+    /// presence_per_block = 0 => no FX (consecutive bits); k > 0 => blocks of k presence + 1 FX (FX=0 on last block).
+    /// Mapping lists (logical_index, field_name); FX is not a mapped field.
+    BitmapPresence { total_bits: u32, presence_per_block: u32, mapping: Vec<(u32, String)> },
     /// Spare/reserved bits (zero on encode).
     PaddingBits(u64),
     StructRef(String),
@@ -217,16 +218,16 @@ pub enum Literal {
     String(String),
 }
 
-fn build_fspec_mappings_messages(messages: &[MessageSection]) -> Result<HashMap<String, FspecMapping>, String> {
+fn build_bitmap_presence_mappings_messages(messages: &[MessageSection]) -> Result<HashMap<String, BitmapPresenceMapping>, String> {
     let mut out = HashMap::new();
     for msg in messages {
         let mut i = 0;
         while i < msg.fields.len() {
-            let is_fspec = matches!(msg.fields[i].type_spec, TypeSpec::FspecWithMapping { .. });
-            if is_fspec {
-                let fspec_field = msg.fields[i].name.clone();
+            let is_bp = matches!(msg.fields[i].type_spec, TypeSpec::BitmapPresence { .. });
+            if is_bp {
+                let presence_field = msg.fields[i].name.clone();
                 let explicit_mapping = match &msg.fields[i].type_spec {
-                    TypeSpec::FspecWithMapping { mapping: m, .. } => Some(m.clone()),
+                    TypeSpec::BitmapPresence { mapping: m, .. } => Some(m.clone()),
                     _ => None,
                 };
                 let mut optional_fields = Vec::new();
@@ -243,7 +244,7 @@ fn build_fspec_mappings_messages(messages: &[MessageSection]) -> Result<HashMap<
                     let mapping_names: Vec<String> = m.iter().map(|(_, n)| n.clone()).collect();
                     if mapping_names != optional_fields {
                         return Err(format!(
-                            "message {}: fspec mapping does not match optional fields (mapping: {:?}, optional fields: {:?})",
+                            "message {}: bitmap_presence mapping does not match optional fields (mapping: {:?}, optional fields: {:?})",
                             msg.name, mapping_names, optional_fields
                         ));
                     }
@@ -251,7 +252,7 @@ fn build_fspec_mappings_messages(messages: &[MessageSection]) -> Result<HashMap<
                 } else {
                     optional_fields.iter().enumerate().map(|(b, name)| (b as u32, name.clone())).collect()
                 };
-                out.insert(msg.name.clone(), FspecMapping { fspec_field, optional_fields, bit_to_field });
+                out.insert(msg.name.clone(), BitmapPresenceMapping { presence_field, optional_fields, bit_to_field });
                 break;
             }
             i += 1;
@@ -260,16 +261,16 @@ fn build_fspec_mappings_messages(messages: &[MessageSection]) -> Result<HashMap<
     Ok(out)
 }
 
-fn build_fspec_mappings_structs(structs: &[StructSection]) -> Result<HashMap<String, FspecMapping>, String> {
+fn build_bitmap_presence_mappings_structs(structs: &[StructSection]) -> Result<HashMap<String, BitmapPresenceMapping>, String> {
     let mut out = HashMap::new();
     for s in structs {
         let mut i = 0;
         while i < s.fields.len() {
-            let is_fspec = matches!(s.fields[i].type_spec, TypeSpec::FspecWithMapping { .. });
-            if is_fspec {
-                let fspec_field = s.fields[i].name.clone();
+            let is_bp = matches!(s.fields[i].type_spec, TypeSpec::BitmapPresence { .. });
+            if is_bp {
+                let presence_field = s.fields[i].name.clone();
                 let explicit_mapping = match &s.fields[i].type_spec {
-                    TypeSpec::FspecWithMapping { mapping: m, .. } => Some(m.clone()),
+                    TypeSpec::BitmapPresence { mapping: m, .. } => Some(m.clone()),
                     _ => None,
                 };
                 let mut optional_fields = Vec::new();
@@ -286,7 +287,7 @@ fn build_fspec_mappings_structs(structs: &[StructSection]) -> Result<HashMap<Str
                     let mapping_names: Vec<String> = m.iter().map(|(_, n)| n.clone()).collect();
                     if mapping_names != optional_fields {
                         return Err(format!(
-                            "struct {}: fspec mapping does not match optional fields (mapping: {:?}, optional fields: {:?})",
+                            "struct {}: bitmap_presence mapping does not match optional fields (mapping: {:?}, optional fields: {:?})",
                             s.name, mapping_names, optional_fields
                         ));
                     }
@@ -294,7 +295,7 @@ fn build_fspec_mappings_structs(structs: &[StructSection]) -> Result<HashMap<Str
                 } else {
                     optional_fields.iter().enumerate().map(|(b, name)| (b as u32, name.clone())).collect()
                 };
-                out.insert(s.name.clone(), FspecMapping { fspec_field, optional_fields, bit_to_field });
+                out.insert(s.name.clone(), BitmapPresenceMapping { presence_field, optional_fields, bit_to_field });
                 break;
             }
             i += 1;
@@ -321,24 +322,24 @@ impl Literal {
     }
 }
 
-/// Mapping from an FSPEC field to the optional fields it governs (bit 0 = first, bit 1 = second, ...).
+/// Mapping from a bitmap presence field to the optional fields it governs (bit 0 = first, bit 1 = second, ...).
 #[derive(Debug, Clone)]
-pub struct FspecMapping {
-    /// Name of the field with type `fspec`.
-    pub fspec_field: String,
-    /// Names of the optional fields that follow, in FSPEC bit order.
+pub struct BitmapPresenceMapping {
+    /// Name of the field with type `bitmap_presence`.
+    pub presence_field: String,
+    /// Names of the optional fields that follow, in bit order.
     pub optional_fields: Vec<String>,
-    /// Explicit mapping: FSPEC bit position → field name. Bit 0 = first optional, bit 1 = second, etc.
+    /// Explicit mapping: bit position → field name. Bit 0 = first optional, bit 1 = second, etc.
     pub bit_to_field: Vec<(u32, String)>,
 }
 
-impl FspecMapping {
-    /// Field name for a given FSPEC bit position. Returns None if bit is out of range.
+impl BitmapPresenceMapping {
+    /// Field name for a given bit position. Returns None if bit is out of range.
     pub fn field_for_bit(&self, bit: u32) -> Option<&str> {
         self.bit_to_field.iter().find(|(b, _)| *b == bit).map(|(_, name)| name.as_str())
     }
 
-    /// FSPEC bit position for a given field name. Returns None if the field is not in this FSPEC.
+    /// Bit position for a given field name. Returns None if the field is not in this mapping.
     pub fn bit_for_field(&self, field_name: &str) -> Option<u32> {
         self.bit_to_field.iter().find(|(_, name)| name.as_str() == field_name).map(|(b, _)| *b)
     }
@@ -352,10 +353,10 @@ pub struct ResolvedProtocol {
     pub type_defs_by_name: HashMap<String, usize>,
     pub structs_by_name: HashMap<String, usize>,
     pub messages_by_name: HashMap<String, usize>,
-    /// Message name -> FSPEC field and the optional fields it governs.
-    pub message_fspec: HashMap<String, FspecMapping>,
-    /// Struct name -> FSPEC field and the optional fields it governs.
-    pub struct_fspec: HashMap<String, FspecMapping>,
+    /// Message name -> bitmap presence field and the optional fields it governs.
+    pub message_bitmap_presence: HashMap<String, BitmapPresenceMapping>,
+    /// Struct name -> bitmap presence field and the optional fields it governs.
+    pub struct_bitmap_presence: HashMap<String, BitmapPresenceMapping>,
 }
 
 impl ResolvedProtocol {
@@ -392,26 +393,26 @@ impl ResolvedProtocol {
                 }
             }
         }
-        let message_fspec = build_fspec_mappings_messages(&protocol.messages)?;
-        let struct_fspec = build_fspec_mappings_structs(&protocol.structs)?;
+        let message_bitmap_presence = build_bitmap_presence_mappings_messages(&protocol.messages)?;
+        let struct_bitmap_presence = build_bitmap_presence_mappings_structs(&protocol.structs)?;
         Ok(ResolvedProtocol {
             protocol,
             type_defs_by_name,
             structs_by_name,
             messages_by_name,
-            message_fspec,
-            struct_fspec,
+            message_bitmap_presence,
+            struct_bitmap_presence,
         })
     }
 
-    /// Mapping from FSPEC field to optional fields for a message. None if the message has no fspec field.
-    pub fn fspec_mapping_message(&self, message_name: &str) -> Option<&FspecMapping> {
-        self.message_fspec.get(message_name)
+    /// Mapping from bitmap presence field to optional fields for a message. None if the message has no such field.
+    pub fn bitmap_presence_mapping_message(&self, message_name: &str) -> Option<&BitmapPresenceMapping> {
+        self.message_bitmap_presence.get(message_name)
     }
 
-    /// Mapping from FSPEC field to optional fields for a struct. None if the struct has no fspec field.
-    pub fn fspec_mapping_struct(&self, struct_name: &str) -> Option<&FspecMapping> {
-        self.struct_fspec.get(struct_name)
+    /// Mapping from bitmap presence field to optional fields for a struct. None if the struct has no such field.
+    pub fn bitmap_presence_mapping_struct(&self, struct_name: &str) -> Option<&BitmapPresenceMapping> {
+        self.struct_bitmap_presence.get(struct_name)
     }
 
     /// Message type names that can follow the transport. Empty if no payload section.

@@ -14,14 +14,14 @@ pub enum Endianness {
     Little,
 }
 
-/// Presence state for optional fields: fixed bitmap (presence_bits) or variable-length FSPEC (fspec).
+/// Presence state for optional fields: fixed bitmap (presence_bits) or bitmap presence (bitmap_presence).
 #[derive(Default)]
 enum WalkPresence {
     #[default]
     None,
     Bitmap(u64, usize),
-    /// bits_per_block: 8 = 7+FX per byte; 0 = 8 presence bits per byte (no FX).
-    Fspec(Vec<u8>, usize, u32),
+    /// presence_per_block: 0 = consecutive presence bits (8 per byte); k>0 = k presence + 1 FX per block.
+    BitmapPresence(Vec<u8>, usize, u32),
 }
 
 /// Context for walk: stores numeric field values and optional presence state.
@@ -309,17 +309,19 @@ impl<'a> BinaryWalker<'a> {
                 let bitmap = read_bitmap_n(self.data, &mut self.pos, self.endianness, *n)?;
                 self.ctx.presence = WalkPresence::Bitmap(bitmap, 0);
             }
-            TypeSpec::FspecWithMapping { max_bits, bits_per_block, .. } => {
-                let max_bytes = ((*max_bits + 7) / 8) as usize;
+            TypeSpec::BitmapPresence { total_bits, presence_per_block, .. } => {
+                let max_encoded_bits = if *presence_per_block == 0 { *total_bits } else { ((*total_bits + presence_per_block - 1) / presence_per_block) * (presence_per_block + 1) };
+                let max_bytes = ((max_encoded_bits + 7) / 8) as usize;
                 let mut bytes = Vec::new();
-                if *bits_per_block == 0 {
+                if *presence_per_block == 0 {
                     if self.pos + max_bytes > self.data.len() {
                         return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
                     }
                     bytes.extend_from_slice(&self.data[self.pos..self.pos + max_bytes]);
                     self.pos += max_bytes;
                 } else {
-                    loop {
+                    let max_blocks = (*total_bits + presence_per_block - 1) / presence_per_block;
+                    for _ in 0..max_blocks {
                         if self.pos >= self.data.len() {
                             return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
                         }
@@ -331,7 +333,7 @@ impl<'a> BinaryWalker<'a> {
                         }
                     }
                 }
-                self.ctx.presence = WalkPresence::Fspec(bytes, 0, *bits_per_block);
+                self.ctx.presence = WalkPresence::BitmapPresence(bytes, 0, *presence_per_block);
             }
             TypeSpec::PaddingBits(n) => {
                 let byte_len = ((*n + 7) / 8) as usize;
@@ -389,10 +391,10 @@ impl<'a> BinaryWalker<'a> {
                         *i += 1;
                         bit != 0
                     }
-                    WalkPresence::Fspec(bytes, i, bits_per_block) => {
-                        let bits_per_byte = if *bits_per_block == 0 { 8 } else { 7 };
-                        let byte_idx = *i / bits_per_byte;
-                        let bit_idx = *i % bits_per_byte;
+                    WalkPresence::BitmapPresence(bytes, i, presence_per_block) => {
+                        let bits_per_block = if *presence_per_block == 0 { 8 } else { *presence_per_block as usize };
+                        let byte_idx = *i / bits_per_block;
+                        let bit_idx = *i % bits_per_block;
                         *i += 1;
                         let bit = if byte_idx < bytes.len() { (bytes[byte_idx] >> (7 - bit_idx)) & 1 } else { 0 };
                         bit != 0
@@ -491,17 +493,19 @@ impl<'a> BinaryWalkerMut<'a> {
                 let bitmap = read_bitmap_n(self.data, &mut self.pos, self.endianness, *n)?;
                 self.ctx.presence = WalkPresence::Bitmap(bitmap, 0);
             }
-            TypeSpec::FspecWithMapping { max_bits, bits_per_block, .. } => {
-                let max_bytes = ((*max_bits + 7) / 8) as usize;
+            TypeSpec::BitmapPresence { total_bits, presence_per_block, .. } => {
+                let max_encoded_bits = if *presence_per_block == 0 { *total_bits } else { ((*total_bits + presence_per_block - 1) / presence_per_block) * (presence_per_block + 1) };
+                let max_bytes = ((max_encoded_bits + 7) / 8) as usize;
                 let mut bytes = Vec::new();
-                if *bits_per_block == 0 {
+                if *presence_per_block == 0 {
                     if self.pos + max_bytes > self.data.len() {
                         return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
                     }
                     bytes.extend_from_slice(&self.data[self.pos..self.pos + max_bytes]);
                     self.pos += max_bytes;
                 } else {
-                    loop {
+                    let max_blocks = (*total_bits + presence_per_block - 1) / presence_per_block;
+                    for _ in 0..max_blocks {
                         if self.pos >= self.data.len() {
                             return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
                         }
@@ -513,7 +517,7 @@ impl<'a> BinaryWalkerMut<'a> {
                         }
                     }
                 }
-                self.ctx.presence = WalkPresence::Fspec(bytes, 0, *bits_per_block);
+                self.ctx.presence = WalkPresence::BitmapPresence(bytes, 0, *presence_per_block);
             }
             TypeSpec::PaddingBits(n) => {
                 let byte_len = ((*n + 7) / 8) as usize;
@@ -581,10 +585,10 @@ impl<'a> BinaryWalkerMut<'a> {
                         *i += 1;
                         bit != 0
                     }
-                    WalkPresence::Fspec(bytes, i, bits_per_block) => {
-                        let bits_per_byte = if *bits_per_block == 0 { 8 } else { 7 };
-                        let byte_idx = *i / bits_per_byte;
-                        let bit_idx = *i % bits_per_byte;
+                    WalkPresence::BitmapPresence(bytes, i, presence_per_block) => {
+                        let bits_per_block = if *presence_per_block == 0 { 8 } else { *presence_per_block as usize };
+                        let byte_idx = *i / bits_per_block;
+                        let bit_idx = *i % bits_per_block;
                         *i += 1;
                         let bit = if byte_idx < bytes.len() { (bytes[byte_idx] >> (7 - bit_idx)) & 1 } else { 0 };
                         bit != 0
@@ -624,17 +628,19 @@ impl<'a> BinaryWalkerMut<'a> {
                 let bitmap = read_bitmap_n(self.data, &mut self.pos, self.endianness, *n)?;
                 self.ctx.presence = WalkPresence::Bitmap(bitmap, 0);
             }
-            TypeSpec::FspecWithMapping { max_bits, bits_per_block, .. } => {
-                let max_bytes = ((*max_bits + 7) / 8) as usize;
+            TypeSpec::BitmapPresence { total_bits, presence_per_block, .. } => {
+                let max_encoded_bits = if *presence_per_block == 0 { *total_bits } else { ((*total_bits + presence_per_block - 1) / presence_per_block) * (presence_per_block + 1) };
+                let max_bytes = ((max_encoded_bits + 7) / 8) as usize;
                 let mut bytes = Vec::new();
-                if *bits_per_block == 0 {
+                if *presence_per_block == 0 {
                     if self.pos + max_bytes > self.data.len() {
                         return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
                     }
                     bytes.extend_from_slice(&self.data[self.pos..self.pos + max_bytes]);
                     self.pos += max_bytes;
                 } else {
-                    loop {
+                    let max_blocks = (*total_bits + presence_per_block - 1) / presence_per_block;
+                    for _ in 0..max_blocks {
                         if self.pos >= self.data.len() {
                             return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
                         }
@@ -646,7 +652,7 @@ impl<'a> BinaryWalkerMut<'a> {
                         }
                     }
                 }
-                self.ctx.presence = WalkPresence::Fspec(bytes, 0, *bits_per_block);
+                self.ctx.presence = WalkPresence::BitmapPresence(bytes, 0, *presence_per_block);
             }
             TypeSpec::PaddingBits(n) => {
                 let byte_len = ((*n + 7) / 8) as usize;
@@ -713,10 +719,10 @@ impl<'a> BinaryWalkerMut<'a> {
                         *i += 1;
                         bit != 0
                     }
-                    WalkPresence::Fspec(bytes, i, bits_per_block) => {
-                        let bits_per_byte = if *bits_per_block == 0 { 8 } else { 7 };
-                        let byte_idx = *i / bits_per_byte;
-                        let bit_idx = *i % bits_per_byte;
+                    WalkPresence::BitmapPresence(bytes, i, presence_per_block) => {
+                        let bits_per_block = if *presence_per_block == 0 { 8 } else { *presence_per_block as usize };
+                        let byte_idx = *i / bits_per_block;
+                        let bit_idx = *i % bits_per_block;
                         *i += 1;
                         let bit = if byte_idx < bytes.len() { (bytes[byte_idx] >> (7 - bit_idx)) & 1 } else { 0 };
                         bit != 0

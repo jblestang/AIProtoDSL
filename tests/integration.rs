@@ -318,11 +318,11 @@ fn test_presence_bits_encode_decode() {
     assert_eq!(decoded2.get("b"), Some(&Value::List(vec![])));
 }
 
-// --- Fspec (ASTERIX-style variable-length FSPEC) ---
+// --- Bitmap presence (variable-length presence bitmap; e.g. ASTERIX uses 7 presence + 1 FX per block) ---
 
 const FSPEC_PROTO: &str = r#"
 message FspecRecord {
-  fspec: fspec(8, 8) -> (0: a, 1: b);
+  fspec: bitmap_presence(2, 7) -> (0: a, 1: b);
   a: optional<u8>;
   b: optional<u16>;
 }
@@ -341,7 +341,7 @@ fn test_fspec_encode_decode() {
     let encoded = codec.encode_message("FspecRecord", &v).expect("encode");
     assert!(encoded.len() >= 2);
     let first_byte = encoded[0];
-    // FSPEC: 7 presence bits in bits 7-1 (MSB first), FX in LSB. Two optionals present => bits 7 and 6 set => 0x40
+    // bitmap_presence(2, 7): 2 presence bits then FX. Two optionals present => bits 7 and 6 set => 0x40
     assert_eq!(first_byte & 0x7f, 0x40);
     let decoded = codec.decode_message("FspecRecord", &encoded).expect("decode");
     assert_eq!(decoded.get("a"), Some(&Value::U8(10)));
@@ -409,30 +409,29 @@ fn test_asterix_family_parse() {
     assert_eq!(cat002_optionals[7], "i002_070");
     assert_eq!(cat002_optionals[10], "i002_080");
 
-    // Cat002 FSPEC mapping with FX bits
-    let fspec002 = resolved.fspec_mapping_message("Cat002Record").expect("Cat002Record has fspec");
-    assert_eq!(fspec002.optional_fields.len(), 11);
-    assert_eq!(fspec002.field_for_bit(0), Some("i002_010"));
-    assert_eq!(fspec002.field_for_bit(7), Some("i002_070")); // logical 7 (physical 8, after FX at 7)
+    // Cat002 bitmap presence mapping
+    let bp002 = resolved.bitmap_presence_mapping_message("Cat002Record").expect("Cat002Record has bitmap_presence");
+    assert_eq!(bp002.optional_fields.len(), 11);
+    assert_eq!(bp002.field_for_bit(0), Some("i002_010"));
+    assert_eq!(bp002.field_for_bit(7), Some("i002_070"));
 
-    // FSPEC mapping: explicit link between fspec field and the optional fields it governs
-    let fspec = resolved.fspec_mapping_message("Cat048Record").expect("Cat048Record has fspec");
-    assert_eq!(fspec.fspec_field, "fspec");
-    assert!(fspec.optional_fields.len() > 10);
-    // UAP (EUROCONTROL spec): 010, 140, 020, 040, 070, 090, 130, FX, 220, 240, 250, 161, 042, 200, 170, FX, ...
-    assert_eq!(fspec.optional_fields[0], "i048_010");
-    assert_eq!(fspec.optional_fields[1], "i048_140");
-    assert_eq!(fspec.optional_fields[2], "i048_020");
-    assert_eq!(fspec.optional_fields[3], "i048_040");
-    assert_eq!(fspec.optional_fields[10], "i048_161");
-    assert!(fspec.optional_fields.contains(&"i048_220".to_string()));
-    assert!(fspec.optional_fields.contains(&"i048_260".to_string()));
-    assert_eq!(fspec.field_for_bit(0), Some("i048_010"));
-    assert_eq!(fspec.bit_for_field("i048_161"), Some(10)); // logical index (FX filtered)
-    assert_eq!(fspec.bit_for_field("i048_130"), Some(6));
+    // Bitmap presence mapping: link between presence field and the optional fields it governs
+    let bp = resolved.bitmap_presence_mapping_message("Cat048Record").expect("Cat048Record has bitmap_presence");
+    assert_eq!(bp.presence_field, "fspec");
+    assert!(bp.optional_fields.len() > 10);
+    assert_eq!(bp.optional_fields[0], "i048_010");
+    assert_eq!(bp.optional_fields[1], "i048_140");
+    assert_eq!(bp.optional_fields[2], "i048_020");
+    assert_eq!(bp.optional_fields[3], "i048_040");
+    assert_eq!(bp.optional_fields[10], "i048_161");
+    assert!(bp.optional_fields.contains(&"i048_220".to_string()));
+    assert!(bp.optional_fields.contains(&"i048_260".to_string()));
+    assert_eq!(bp.field_for_bit(0), Some("i048_010"));
+    assert_eq!(bp.bit_for_field("i048_161"), Some(10));
+    assert_eq!(bp.bit_for_field("i048_130"), Some(6));
 }
 
-/// Decode frame 1 CAT048 block (FSPEC 0xFD 0xF7 0x02 => I048/130 absent). Verifies FSPEC mapping is applied so we skip 130 and decode past 161.
+/// Decode frame 1 CAT048 block (bitmap_presence 0xFD 0xF7 0x02 => I048/130 absent). Verifies mapping is applied so we skip 130 and decode past 161.
 #[test]
 fn test_cat048_frame1_130_absent_decode() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/asterix_family.dsl");
@@ -441,10 +440,10 @@ fn test_cat048_frame1_130_absent_decode() {
     let resolved = ResolvedProtocol::resolve(protocol).expect("resolve");
     let codec = Codec::new(resolved, Endianness::Big);
 
-    // FSPEC 0xFD 0xF0: 130 absent (bit 6=0); 220,240,250,161 present; 042,200,170 absent (bit 15=0 so no 3rd octet).
+    // 0xFD 0xF0: 130 absent (bit 6=0); 220,240,250,161 present; 042,200,170 absent (bit 15=0 so no 3rd block).
     // I048/240 = 8×6 bits = 6 bytes; 250 count=0; 161(2). Total 2+14+3+6+1+2 = 28 bytes.
     let payload: Vec<u8> = vec![
-        0xfd, 0xf0,                                                                                     // FSPEC (2)
+        0xfd, 0xf0,                                                                                     // bitmap_presence (2 bytes)
         0x19, 0xc9, 0x35, 0x6d, 0x4d, 0xa0, 0xc5, 0xaf, 0xf1, 0xe0, 0x02, 0x00, 0x05, 0x28,             // 010..090 (14)
         0x3c, 0x66, 0x0c, 0x10, 0xc2, 0x36, 0xd4, 0x18, 0x01, 0x00, 0x07, 0xb9,                       // 220(3),240(6),250(count=0),161(2) (12)
     ];
@@ -453,14 +452,14 @@ fn test_cat048_frame1_130_absent_decode() {
     let (consumed, result) = codec.decode_message_with_extent("Cat048Record", &payload);
     match &result {
         Ok(values) => {
-            // I048/130 must be absent (we read FSPEC bit 6 = 0)
+            // I048/130 must be absent (we read presence bit 6 = 0)
             let v130 = values.get("i048_130").expect("i048_130 field");
             let list = v130.as_list().expect("i048_130 is list when absent");
             assert!(list.is_empty(), "I048/130 should be absent for FSPEC 0xFD: {:?}", v130);
             // We must have decoded past 161
             assert!(values.get("i048_161").is_some(), "i048_161 should be present");
         }
-        Err(e) => panic!("decode should succeed when FSPEC mapping skips 130: {} (consumed={})", e, consumed),
+        Err(e) => panic!("decode should succeed when mapping skips 130: {} (consumed={})", e, consumed),
     }
 }
 
@@ -535,31 +534,30 @@ fn test_dsl_lint_tabs_and_one_field_per_line() {
     );
 }
 
-/// Nested FSPEC structs: message with optional struct, each struct has its own FSPEC and optional nested struct, up to depth 5.
-/// Verifies that presence is handled via a stack (push on FSPEC decode, pop on struct exit) so nested optionals use the correct level.
+/// Nested bitmap_presence structs: message with optional struct, each struct has its own bitmap_presence and optional nested struct, up to depth 5.
 const NESTED_FSPEC_DEPTH_5: &str = r#"
 message Nest5 {
-  fspec: fspec(8, 8) -> (0: a);
+  fspec: bitmap_presence(1, 7) -> (0: a);
   a: optional<Level1>;
 }
 struct Level1 {
-  fspec: fspec(8, 8) -> (0: b);
+  fspec: bitmap_presence(1, 7) -> (0: b);
   b: optional<Level2>;
 }
 struct Level2 {
-  fspec: fspec(8, 8) -> (0: c);
+  fspec: bitmap_presence(1, 7) -> (0: c);
   c: optional<Level3>;
 }
 struct Level3 {
-  fspec: fspec(8, 8) -> (0: d);
+  fspec: bitmap_presence(1, 7) -> (0: d);
   d: optional<Level4>;
 }
 struct Level4 {
-  fspec: fspec(8, 8) -> (0: e);
+  fspec: bitmap_presence(1, 7) -> (0: e);
   e: optional<Level5>;
 }
 struct Level5 {
-  fspec: fspec(8, 8) -> (0: v);
+  fspec: bitmap_presence(1, 7) -> (0: v);
   v: optional<u8> [0..255];
 }
 "#;
@@ -592,7 +590,7 @@ fn test_nested_fspec_presence_stack_depth_5() {
     ]);
 
     let encoded = codec.encode_message("Nest5", &msg).expect("encode");
-    // 1 (msg fspec 0x80) + 1 (L1 fspec) + 1 (L2 fspec) + 1 (L3 fspec) + 1 (L4 fspec) + 1 (L5 fspec) + 1 (v) = 7 bytes
+    // 1 (msg presence 0x80) + 1 (L1) + 1 (L2) + 1 (L3) + 1 (L4) + 1 (L5) + 1 (v) = 7 bytes
     assert!(encoded.len() >= 7, "encoded should have at least 7 bytes, got {}", encoded.len());
 
     let decoded = codec.decode_message("Nest5", &encoded).expect("decode");

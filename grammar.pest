@@ -67,7 +67,7 @@ type_spec = {
     | length_of_type
     | count_of_type
     | presence_bits_type
-    | fspec_type
+    | bitmap_presence_type
     | padding_bits_type
     | list_type
     | rep_list_type
@@ -80,11 +80,13 @@ octets_fx_type = { "octets_fx" }
 
 // ASN.1-style bitmap: n bytes (1, 2, or 4); following optional fields use bits 0,1,2,...
 presence_bits_type = { "presence_bits" ~ "(" ~ num ~ ")" }
-// ASTERIX FSPEC: fspec(N, n) = up to N bits. n=8 => 7 presence + 1 FX per byte; n=0 => no blocking (N consecutive presence bits).
-fspec_size = { "(" ~ num ~ "," ~ num ~ ")" }
-fspec_type = { "fspec" ~ fspec_size ~ ("->" ~ "(" ~ fspec_mapping_list ~ ")")? }
-fspec_mapping_list = { (fspec_bit_mapping ~ ",")* ~ fspec_bit_mapping }
-fspec_bit_mapping = { num ~ ":" ~ ident }
+// Bitmap presence: bitmap_presence(total_bits, presence_per_block).
+// total_bits = number of presence bits (optionals). presence_per_block = 0 => no FX (consecutive bits);
+// presence_per_block = k > 0 => blocks of k presence bits then 1 FX bit (FX=0 on last block).
+bitmap_presence_size = { "(" ~ num ~ "," ~ num ~ ")" }
+bitmap_presence_type = { "bitmap_presence" ~ bitmap_presence_size ~ ("->" ~ "(" ~ bitmap_presence_mapping_list ~ ")")? }
+bitmap_presence_mapping_list = { (bitmap_presence_bit_mapping ~ ",")* ~ bitmap_presence_bit_mapping }
+bitmap_presence_bit_mapping = { num ~ ":" ~ ident }
 // Spare/reserved bits (zero on encode)
 padding_bits_type = { "padding_bits" ~ "(" ~ num ~ ")" }
 

@@ -419,39 +419,40 @@ fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String
             }
             Ok(TypeSpec::PresenceBits(n))
         }
-        Rule::fspec_type => {
+        Rule::bitmap_presence_type => {
             let pairs: Vec<_> = inner.into_inner().collect();
             let nums: Vec<u32> = pairs
                 .iter()
-                .find(|p| p.as_rule() == Rule::fspec_size)
+                .find(|p| p.as_rule() == Rule::bitmap_presence_size)
                 .map(|p| p.clone().into_inner().filter_map(|q| q.as_str().parse().ok()).collect())
                 .unwrap_or_default();
-            let max_bits = nums.get(0).copied().ok_or("fspec requires fspec(N, n) with N = max bits")?;
-            let bits_per_block = nums.get(1).copied().ok_or("fspec requires fspec(N, n) with n = bits per group (e.g. 8 = 7 presence + 1 FX)")?;
+            let total_bits = nums.get(0).copied().ok_or("bitmap_presence requires (total_bits, presence_per_block)")?;
+            let presence_per_block = nums.get(1).copied().ok_or("bitmap_presence requires (total_bits, presence_per_block)")?;
             let mapping = pairs
                 .into_iter()
-                .find(|p| p.as_rule() == Rule::fspec_mapping_list)
+                .find(|p| p.as_rule() == Rule::bitmap_presence_mapping_list)
                 .map(|pair| {
                     let all_entries: Vec<(u32, String)> = pair.into_inner()
-                        .filter(|p| p.as_rule() == Rule::fspec_bit_mapping)
+                        .filter(|p| p.as_rule() == Rule::bitmap_presence_bit_mapping)
                         .map(|p| {
                             let mut it = p.into_inner();
-                            let num_p = it.next().ok_or("fspec bit mapping")?;
-                            let ident_p = it.next().ok_or("fspec bit mapping")?;
-                            let bit = num_p.as_str().parse::<u32>().map_err(|_| "fspec bit number")?;
+                            let num_p = it.next().ok_or("bitmap_presence bit mapping")?;
+                            let ident_p = it.next().ok_or("bitmap_presence bit mapping")?;
+                            let bit = num_p.as_str().parse::<u32>().map_err(|_| "bitmap_presence bit number")?;
                             let name = ident_p.as_str().to_string();
                             Ok((bit, name))
                         })
                         .collect::<Result<Vec<_>, String>>()?;
-                    // FX no longer in mapping; filter out if present for backward compat, renumber to logical indices.
+                    // FX is not a mapped field; filter out if present for backward compat, renumber to logical indices.
                     let mut logical = Vec::new();
                     let mut logical_idx: u32 = 0;
+                    let block_bits = if presence_per_block == 0 { 8 } else { presence_per_block + 1 };
                     for (phys_bit, name) in &all_entries {
                         if name == "FX" {
-                            if phys_bit % 8 != 7 {
+                            if block_bits > 0 && phys_bit % block_bits != block_bits - 1 {
                                 return Err(format!(
-                                    "fspec mapping: FX at physical bit {} is invalid (must be at 7, 15, 23, ...)",
-                                    phys_bit
+                                    "bitmap_presence mapping: FX at physical bit {} is invalid (must be last bit of each block of {})",
+                                    phys_bit, block_bits
                                 ));
                             }
                         } else {
@@ -463,9 +464,9 @@ fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String
                 })
                 .transpose()?
                 .unwrap_or_default();
-            Ok(TypeSpec::FspecWithMapping {
-                max_bits,
-                bits_per_block,
+            Ok(TypeSpec::BitmapPresence {
+                total_bits,
+                presence_per_block,
                 mapping,
             })
         }
