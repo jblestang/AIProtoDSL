@@ -1,12 +1,78 @@
 use aiprotodsl::frame::decode_frame;
+use aiprotodsl::value::Value;
 use aiprotodsl::{parse, Codec, Endianness, ResolvedProtocol};
 use pcap_parser::pcapng::Block as PcapNgBlock;
 use pcap_parser::traits::{PcapNGPacketBlock, PcapReaderIterator};
 use pcap_parser::{Linktype, PcapBlockOwned, PcapError};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::PathBuf;
+
+/// Format a Value for text dump (compact, one line for scalars).
+fn value_to_dump(v: &Value, indent: usize) -> String {
+    let pad = "  ".repeat(indent);
+    match v {
+        Value::U8(x) => format!("{}{}", pad, x),
+        Value::U16(x) => format!("{}{}", pad, x),
+        Value::U32(x) => format!("{}{}", pad, x),
+        Value::U64(x) => format!("{}{}", pad, x),
+        Value::I8(x) => format!("{}{}", pad, x),
+        Value::I16(x) => format!("{}{}", pad, x),
+        Value::I32(x) => format!("{}{}", pad, x),
+        Value::I64(x) => format!("{}{}", pad, x),
+        Value::Bool(x) => format!("{}{}", pad, x),
+        Value::Float(x) => format!("{}{}", pad, x),
+        Value::Double(x) => format!("{}{}", pad, x),
+        Value::Bytes(b) => format!("{}hex({})", pad, hex_string(b)),
+        Value::Struct(m) => {
+            let mut lines: Vec<String> = vec![format!("{}struct {{", pad)];
+            let mut keys: Vec<_> = m.keys().collect();
+            keys.sort();
+            for k in keys {
+                let sub = value_to_dump(m.get(k).unwrap(), indent + 1);
+                lines.push(format!("  {}: {}", k, sub.trim_start()));
+            }
+            lines.push(format!("{}}}", pad));
+            lines.join("\n")
+        }
+        Value::List(lst) => {
+            if lst.is_empty() {
+                format!("{}[]", pad)
+            } else if lst.len() == 1 {
+                value_to_dump(&lst[0], indent)
+            } else {
+                let mut lines: Vec<String> = vec![format!("{}[", pad)];
+                for (i, item) in lst.iter().enumerate() {
+                    let sub = value_to_dump(item, indent + 1);
+                    lines.push(format!("  [{}] {}", i, sub.trim_start()));
+                }
+                lines.push(format!("{}]", pad));
+                lines.join("\n")
+            }
+        }
+        Value::Padding | Value::Reserved => format!("{}<padding>", pad),
+    }
+}
+
+fn hex_string(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{:02x}", x)).collect::<Vec<_>>().join(" ")
+}
+
+/// Write record bytes (block without 3-byte transport) with data offset (0 = first byte of record).
+fn write_record_hex_with_offset(w: &mut dyn Write, block: &[u8]) -> std::io::Result<()> {
+    if block.len() <= 3 {
+        return Ok(());
+    }
+    let record = &block[3..];
+    const COLS: usize = 16;
+    for (i, chunk) in record.chunks(COLS).enumerate() {
+        let start = i * COLS;
+        let hex_line = chunk.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
+        writeln!(w, "  offset {:3}: {}", start, hex_line)?;
+    }
+    Ok(())
+}
  
 fn main() -> anyhow::Result<()> {
     let mut raw_args: Vec<String> = std::env::args().skip(1).collect();
@@ -16,6 +82,26 @@ fn main() -> anyhow::Result<()> {
     } else {
         false
     };
+    let dump_path: Option<PathBuf> = raw_args
+        .iter()
+        .position(|a| a.starts_with("--dump"))
+        .and_then(|pos| {
+            let arg = raw_args.remove(pos);
+            if arg == "--dump" {
+                Some(PathBuf::from("-"))
+            } else if let Some(p) = arg.strip_prefix("--dump=") {
+                Some(PathBuf::from(p))
+            } else {
+                None
+            }
+        });
+    let frame_filter: Option<u64> = raw_args
+        .iter()
+        .position(|a| a.starts_with("--frame="))
+        .and_then(|pos| {
+            let arg = raw_args.remove(pos);
+            arg.strip_prefix("--frame=").and_then(|s| s.parse().ok())
+        });
     let mut args = raw_args.into_iter();
     let pcap_path: PathBuf = args.next().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("assets/asterix.pcap"));
     let dsl_path: PathBuf = args.next().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("examples/asterix_family.dsl"));
@@ -34,7 +120,15 @@ fn main() -> anyhow::Result<()> {
     let mut known_categories: HashMap<u8, (u64, u64, u64)> = HashMap::new(); // cat -> (blocks, decoded, removed)
     let mut first_errors: HashMap<u8, String> = HashMap::new();
 
-    // Probe file type (pcap vs pcapng) using the magic at start of file.
+    let mut dump_writer: Option<Box<dyn Write>> = dump_path.as_ref().map(|p| {
+        if p.as_os_str() == "-" {
+            Box::new(std::io::stdout()) as Box<dyn Write>
+        } else {
+            Box::new(File::create(p).expect("create dump file")) as Box<dyn Write>
+        }
+    });
+
+    // Probe file type (pcap vs pcapng) (pcap vs pcapng) using the magic at start of file.
     let mut probe = [0u8; 4];
     {
         let mut f = File::open(&pcap_path)?;
@@ -48,6 +142,8 @@ fn main() -> anyhow::Result<()> {
             &codec,
             &resolved,
             verbose,
+            &mut dump_writer,
+            frame_filter,
             &mut pkt_count,
             &mut udp_count,
             &mut block_count,
@@ -64,6 +160,8 @@ fn main() -> anyhow::Result<()> {
             &codec,
             &resolved,
             verbose,
+            &mut dump_writer,
+            frame_filter,
             &mut pkt_count,
             &mut udp_count,
             &mut block_count,
@@ -110,6 +208,8 @@ fn run_legacy_pcap<R: Read>(
     codec: &Codec,
     resolved: &ResolvedProtocol,
     verbose: bool,
+    dump: &mut Option<Box<dyn Write>>,
+    frame_filter: Option<u64>,
     pkt_count: &mut u64,
     udp_count: &mut u64,
     block_count: &mut u64,
@@ -135,7 +235,10 @@ fn run_legacy_pcap<R: Read>(
                                 codec,
                                 resolved,
                                 udp_payload,
+                                *pkt_count,
                                 verbose,
+                                dump,
+                                frame_filter,
                                 block_count,
                                 decoded_records,
                                 removed_records,
@@ -166,6 +269,8 @@ fn run_pcapng<R: Read>(
     codec: &Codec,
     resolved: &ResolvedProtocol,
     verbose: bool,
+    dump: &mut Option<Box<dyn Write>>,
+    frame_filter: Option<u64>,
     pkt_count: &mut u64,
     udp_count: &mut u64,
     block_count: &mut u64,
@@ -193,7 +298,10 @@ fn run_pcapng<R: Read>(
                                     codec,
                                     resolved,
                                     udp_payload,
+                                    *pkt_count,
                                     verbose,
+                                    dump,
+                                    frame_filter,
                                     block_count,
                                     decoded_records,
                                     removed_records,
@@ -213,7 +321,10 @@ fn run_pcapng<R: Read>(
                                     codec,
                                     resolved,
                                     udp_payload,
+                                    *pkt_count,
                                     verbose,
+                                    dump,
+                                    frame_filter,
                                     block_count,
                                     decoded_records,
                                     removed_records,
@@ -244,7 +355,10 @@ fn process_udp_payload(
     codec: &Codec,
     resolved: &ResolvedProtocol,
     udp_payload: &[u8],
+    packet_index: u64,
     verbose: bool,
+    dump: &mut Option<Box<dyn Write>>,
+    frame_filter: Option<u64>,
     block_count: &mut u64,
     decoded_records: &mut u64,
     removed_records: &mut u64,
@@ -253,18 +367,16 @@ fn process_udp_payload(
     first_errors: &mut HashMap<u8, String>,
 ) {
     // UDP payload may contain multiple ASTERIX data blocks.
+    // Length field = total block size (Category + Length + record data); per Wireshark/commonly used.
     let mut off = 0usize;
     let mut any_block = false;
     while off + 3 <= udp_payload.len() {
         let cat = udp_payload[off];
-        let len = u16::from_be_bytes([udp_payload[off + 1], udp_payload[off + 2]]) as usize;
-        if len < 3 {
+        let block_len = u16::from_be_bytes([udp_payload[off + 1], udp_payload[off + 2]]) as usize;
+        if block_len < 3 || off + block_len > udp_payload.len() {
             break;
         }
-        if off + len > udp_payload.len() {
-            break;
-        }
-        let block = &udp_payload[off..off + len];
+        let block = &udp_payload[off..off + block_len];
         *block_count += 1;
         any_block = true;
  
@@ -285,6 +397,36 @@ fn process_udp_payload(
                                     first_errors.insert(cat, rm.reason.clone());
                                 }
                             }
+                            if let Some(w) = dump.as_mut() {
+                                if frame_filter.map(|f| f != packet_index).unwrap_or(false) {
+                                    // skip dump for this packet
+                                } else {
+                                    let _ = writeln!(w, "=== packet {}  udp_offset {}  block cat {}  len {} ===", packet_index, off, cat, block_len);
+                                    let _ = writeln!(w, "  data (offset 0 = first byte of record, after 3-byte transport):");
+                                    let _ = write_record_hex_with_offset(&mut **w, block);
+                                    for msg in &res.messages {
+                                        let (a, b) = msg.byte_range;
+                                        let _ = writeln!(w, "  record bytes [{}-{}]  DECODED {}", a, b, msg.name);
+                                        let mut keys: Vec<_> = msg.values.keys().collect();
+                                        keys.sort();
+                                        for k in keys {
+                                            let v = msg.values.get(k).unwrap();
+                                            let txt = value_to_dump(v, 0);
+                                            let mut lines = txt.lines();
+                                            if let Some(first) = lines.next() {
+                                                let _ = writeln!(w, "    {}: {}", k, first.trim_start());
+                                                for line in lines {
+                                                    let _ = writeln!(w, "      {}", line);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    for rm in &res.removed {
+                                        let (a, b) = rm.byte_range;
+                                        let _ = writeln!(w, "  record bytes [{}-{}]  REMOVED: {}", a, b, rm.reason);
+                                    }
+                                }
+                            }
                         }
                         Err(e) => {
                             *removed_records += 1;
@@ -292,18 +434,39 @@ fn process_udp_payload(
                             entry.0 += 1;
                             entry.2 += 1;
                             first_errors.entry(cat).or_insert_with(|| e.to_string());
+                            if let Some(w) = dump.as_mut() {
+                                if frame_filter.map(|f| f != packet_index).unwrap_or(false) {}
+                                else {
+                                    let _ = writeln!(w, "=== packet {}  udp_offset {}  block cat {}  len {} ===", packet_index, off, cat, block_len);
+                                    let _ = writeln!(w, "  data (offset 0 = first byte of record):");
+                                    let _ = write_record_hex_with_offset(&mut **w, block);
+                                    let _ = writeln!(w, "  block decode error: {}", e);
+                                }
+                            }
                         }
                     }
                 } else {
                     *unknown_categories.entry(cat).or_insert(0) += 1;
+                    if let Some(w) = dump.as_mut() {
+                        if !frame_filter.map(|f| f != packet_index).unwrap_or(false) {
+                            let _ = writeln!(w, "=== packet {}  udp_offset {}  block cat {}  len {}  (unknown category, skipped) ===", packet_index, off, cat, block_len);
+                            let _ = write_record_hex_with_offset(&mut **w, block);
+                        }
+                    }
                 }
             }
             Err(_) => {
                 *unknown_categories.entry(cat).or_insert(0) += 1;
+                if let Some(w) = dump.as_mut() {
+                    if !frame_filter.map(|f| f != packet_index).unwrap_or(false) {
+                        let _ = writeln!(w, "=== packet {}  udp_offset {}  block cat {}  len {}  (transport decode failed) ===", packet_index, off, cat, block_len);
+                        let _ = write_record_hex_with_offset(&mut **w, block);
+                    }
+                }
             }
         }
  
-        off += len;
+        off += block_len;
     }
     if verbose && !any_block && !udp_payload.is_empty() {
         let show = udp_payload.len().min(16);

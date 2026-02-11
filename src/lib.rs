@@ -44,6 +44,7 @@
 pub mod ast;
 pub mod codec;
 pub mod frame;
+pub mod lint;
 pub mod parser;
 pub mod value;
 pub mod walk;
@@ -53,6 +54,7 @@ pub use codec::{Codec, CodecError, Endianness};
 pub use frame::{decode_frame, FrameDecodeResult};
 pub use parser::parse;
 pub use value::Value;
+pub use lint::{lint, LintMessage, LintRule, Severity};
 pub use walk::{
     message_extent, validate_message_in_place, zero_padding_reserved_in_place,
     remove_message_in_place, write_u32_in_place,

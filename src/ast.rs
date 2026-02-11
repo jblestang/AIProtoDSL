@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-/// Root protocol definition: transport, payload (messages after transport), type definitions (abstract), messages, structs (encoding).
+/// Root protocol definition: transport, payload (messages after transport), type definitions (abstract), enums, messages, structs (encoding).
 #[derive(Debug, Clone)]
 pub struct Protocol {
     pub transport: Option<TransportSection>,
@@ -10,6 +10,8 @@ pub struct Protocol {
     pub payload: Option<PayloadSection>,
     /// Abstract data model definitions (ASN.1-like). Describe WHAT the data is.
     pub type_defs: Vec<TypeDefSection>,
+    /// Enumerated types: named constants (name = value). Can be referenced from type definitions.
+    pub enum_defs: Vec<EnumSection>,
     /// Encoding: message-level wire format (ECN-like). Describe HOW the data is serialized.
     pub messages: Vec<MessageSection>,
     /// Encoding: struct-level wire format (ECN-like). Describe HOW the data is serialized.
@@ -51,6 +53,14 @@ pub enum AbstractType {
     TypeRef(String),
     /// Ordered sequence of values of a given type (list).
     SequenceOf(Box<AbstractType>),
+}
+
+/// Enumeration: named constants. Referenced from type definitions (e.g. Message Type).
+#[derive(Debug, Clone)]
+pub struct EnumSection {
+    pub name: String,
+    /// Variant name and its integer/hex value (e.g. NorthMarker=1, SectorCrossing=2).
+    pub variants: Vec<(String, Literal)>,
 }
 
 // ==================== Payload & transport ====================
@@ -147,10 +157,9 @@ pub enum TypeSpec {
     CountOf(String),
     /// ASN.1-style presence bitmap: n bytes (1, 2, or 4). Following optional fields use bits 0, 1, 2, ...
     PresenceBits(u64),
-    /// ASTERIX FSPEC: variable-length bytes until FX=0; 7 bits per byte; following optionals use bits 0,1,2,...
-    Fspec,
-    /// FSPEC with explicit bit→field mapping from the DSL (e.g. fspec -> (0: f1, 1: f2, ...)).
-    FspecWithMapping(Vec<(u32, String)>),
+    /// FSPEC: fspec(N, n) = up to N bits. n=8 => 7 presence + 1 FX per byte; n=0 => no blocking (N consecutive presence bits).
+    /// Mapping lists (logical_index, field_name); no FX in mapping.
+    FspecWithMapping { max_bits: u32, bits_per_block: u32, mapping: Vec<(u32, String)> },
     /// Spare/reserved bits (zero on encode).
     PaddingBits(u64),
     StructRef(String),
@@ -158,6 +167,8 @@ pub enum TypeSpec {
     List(Box<TypeSpec>),
     /// List preceded by a 1-byte repetition factor (REP) - common in ASTERIX.
     RepList(Box<TypeSpec>),
+    /// ASTERIX variable-length octets with FX extension: read bytes until byte & 0x80 == 0 (7 bits payload per byte).
+    OctetsFx,
     Optional(Box<TypeSpec>),
 }
 
@@ -203,11 +214,11 @@ fn build_fspec_mappings_messages(messages: &[MessageSection]) -> Result<HashMap<
     for msg in messages {
         let mut i = 0;
         while i < msg.fields.len() {
-            let is_fspec = matches!(msg.fields[i].type_spec, TypeSpec::Fspec | TypeSpec::FspecWithMapping(_));
+            let is_fspec = matches!(msg.fields[i].type_spec, TypeSpec::FspecWithMapping { .. });
             if is_fspec {
                 let fspec_field = msg.fields[i].name.clone();
                 let explicit_mapping = match &msg.fields[i].type_spec {
-                    TypeSpec::FspecWithMapping(m) => Some(m.clone()),
+                    TypeSpec::FspecWithMapping { mapping: m, .. } => Some(m.clone()),
                     _ => None,
                 };
                 let mut optional_fields = Vec::new();
@@ -246,11 +257,11 @@ fn build_fspec_mappings_structs(structs: &[StructSection]) -> Result<HashMap<Str
     for s in structs {
         let mut i = 0;
         while i < s.fields.len() {
-            let is_fspec = matches!(s.fields[i].type_spec, TypeSpec::Fspec | TypeSpec::FspecWithMapping(_));
+            let is_fspec = matches!(s.fields[i].type_spec, TypeSpec::FspecWithMapping { .. });
             if is_fspec {
                 let fspec_field = s.fields[i].name.clone();
                 let explicit_mapping = match &s.fields[i].type_spec {
-                    TypeSpec::FspecWithMapping(m) => Some(m.clone()),
+                    TypeSpec::FspecWithMapping { mapping: m, .. } => Some(m.clone()),
                     _ => None,
                 };
                 let mut optional_fields = Vec::new();

@@ -20,6 +20,7 @@ fn build_protocol(pair: pest::iterators::Pair<Rule>) -> Result<Protocol, String>
     let mut transport = None;
     let mut payload = None;
     let mut type_defs = Vec::new();
+    let mut enum_defs = Vec::new();
     let mut messages = Vec::new();
     let mut structs = Vec::new();
 
@@ -28,6 +29,7 @@ fn build_protocol(pair: pest::iterators::Pair<Rule>) -> Result<Protocol, String>
             Rule::transport_section => transport = Some(build_transport(inner)?),
             Rule::payload_section => payload = Some(build_payload(inner)?),
             Rule::type_section => type_defs.push(build_type_def_section(inner)?),
+            Rule::enum_section => enum_defs.push(build_enum_section(inner)?),
             Rule::message_section => messages.push(build_message(inner)?),
             Rule::struct_section => structs.push(build_struct(inner)?),
             _ => {}
@@ -38,9 +40,39 @@ fn build_protocol(pair: pest::iterators::Pair<Rule>) -> Result<Protocol, String>
         transport,
         payload,
         type_defs,
+        enum_defs,
         messages,
         structs,
     })
+}
+
+fn build_enum_section(pair: pest::iterators::Pair<Rule>) -> Result<EnumSection, String> {
+    let mut name = String::new();
+    let mut variants = Vec::new();
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::ident => {
+                if name.is_empty() {
+                    name = inner.as_str().to_string();
+                } else {
+                    return Err("enum_variant: ident".to_string());
+                }
+            }
+            Rule::enum_variant => {
+                let mut it = inner.into_inner();
+                let name_pair = it.next().ok_or("enum variant: name")?;
+                let var_name = name_pair.as_str().to_string();
+                let lit_pair = it.next().ok_or("enum variant: value")?;
+                let literal = parse_literal(lit_pair.as_str());
+                variants.push((var_name, literal));
+            }
+            _ => {}
+        }
+    }
+    if name.is_empty() {
+        return Err("enum section: missing name".to_string());
+    }
+    Ok(EnumSection { name, variants })
 }
 
 fn build_payload(pair: pest::iterators::Pair<Rule>) -> Result<PayloadSection, String> {
@@ -378,11 +410,18 @@ fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String
             Ok(TypeSpec::PresenceBits(n))
         }
         Rule::fspec_type => {
-            let mut inner_iter = inner.into_inner();
-            let mapping = inner_iter
+            let pairs: Vec<_> = inner.into_inner().collect();
+            let nums: Vec<u32> = pairs
+                .iter()
+                .find(|p| p.as_rule() == Rule::fspec_size)
+                .map(|p| p.clone().into_inner().filter_map(|q| q.as_str().parse().ok()).collect())
+                .unwrap_or_default();
+            let max_bits = nums.get(0).copied().ok_or("fspec requires fspec(N, n) with N = max bits")?;
+            let bits_per_block = nums.get(1).copied().ok_or("fspec requires fspec(N, n) with n = bits per group (e.g. 8 = 7 presence + 1 FX)")?;
+            let mapping = pairs
+                .into_iter()
                 .find(|p| p.as_rule() == Rule::fspec_mapping_list)
                 .map(|pair| {
-                    // Parse all entries (including FX) with physical bit positions
                     let all_entries: Vec<(u32, String)> = pair.into_inner()
                         .filter(|p| p.as_rule() == Rule::fspec_bit_mapping)
                         .map(|p| {
@@ -394,8 +433,7 @@ fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String
                             Ok((bit, name))
                         })
                         .collect::<Result<Vec<_>, String>>()?;
-                    // Validate FX entries are at physical positions 7, 15, 23, ... (every 8th bit starting at 7)
-                    // Filter out FX entries and renumber remaining to logical (data-only) indices.
+                    // FX no longer in mapping; filter out if present for backward compat, renumber to logical indices.
                     let mut logical = Vec::new();
                     let mut logical_idx: u32 = 0;
                     for (phys_bit, name) in &all_entries {
@@ -406,7 +444,6 @@ fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String
                                     phys_bit
                                 ));
                             }
-                            // Skip FX entries; they don't map to a data field
                         } else {
                             logical.push((logical_idx, name.clone()));
                             logical_idx += 1;
@@ -414,10 +451,12 @@ fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String
                     }
                     Ok(logical)
                 })
-                .transpose()?;
-            Ok(match mapping {
-                Some(m) => TypeSpec::FspecWithMapping(m),
-                None => TypeSpec::Fspec,
+                .transpose()?
+                .unwrap_or_default();
+            Ok(TypeSpec::FspecWithMapping {
+                max_bits,
+                bits_per_block,
+                mapping,
             })
         }
         Rule::padding_bits_type => {
@@ -448,6 +487,7 @@ fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String
             let inner_type = inner.into_inner().next().ok_or("rep_list<T>")?;
             Ok(TypeSpec::RepList(Box::new(build_type_spec_inner(inner_type)?)))
         }
+        Rule::octets_fx_type => Ok(TypeSpec::OctetsFx),
         Rule::optional_type => {
             let inner_type = inner.into_inner().next().ok_or("optional<T>")?;
             Ok(TypeSpec::Optional(Box::new(build_type_spec_inner(inner_type)?)))
@@ -492,6 +532,7 @@ fn build_type_spec_inner(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, 
             let inner_type = inner.into_inner().next().ok_or("rep_list<T>")?;
             Ok(TypeSpec::RepList(Box::new(build_type_spec_inner(inner_type)?)))
         }
+        Rule::octets_fx_type => Ok(TypeSpec::OctetsFx),
         _ => Err("Invalid inner type".to_string()),
     }
 }

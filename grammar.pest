@@ -7,14 +7,16 @@ COMMENT = _{ "//" ~ (!"\n" ~ ANY)* | "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
 WHITESPACE = _{ " " | "\t" | "\n" | "\r" | COMMENT }
 
 // --- Top-level ---
-// Sections can be interleaved: type (abstract data model), message/struct (encoding), transport, payload.
-protocol = { SOI ~ (transport_section)? ~ (payload_section)? ~ (type_section | message_section | struct_section)* ~ EOI }
+// Sections can be interleaved: type (abstract data model), message/struct (encoding), enum, transport, payload.
+protocol = { SOI ~ (transport_section)? ~ (payload_section)? ~ (type_section | message_section | struct_section | enum_section)* ~ EOI }
 
 transport_section  = { "transport" ~ "{" ~ transport_field* ~ "}" }
 payload_section    = { "payload" ~ "{" ~ payload_field* ~ "}" }
 type_section       = { "type" ~ ident ~ "{" ~ type_def_field* ~ "}" }
 message_section    = { "message" ~ ident ~ "{" ~ message_field* ~ "}" }
 struct_section     = { "struct" ~ ident ~ "{" ~ struct_field* ~ "}" }
+enum_section       = { "enum" ~ ident ~ "{" ~ enum_variant* ~ "}" }
+enum_variant       = { ident ~ "=" ~ literal ~ ";" }
 
 // --- Abstract data model (ASN.1-like type definitions) ---
 type_def_field = { ident ~ ":" ~ abstract_type_spec ~ type_optional? ~ ("[" ~ constraint ~ "]")? ~ ";" }
@@ -69,15 +71,18 @@ type_spec = {
     | padding_bits_type
     | list_type
     | rep_list_type
+    | octets_fx_type
     | optional_type
     | array_type
     | struct_ref_type
 }
+octets_fx_type = { "octets_fx" }
 
 // ASN.1-style bitmap: n bytes (1, 2, or 4); following optional fields use bits 0,1,2,...
 presence_bits_type = { "presence_bits" ~ "(" ~ num ~ ")" }
-// ASTERIX FSPEC: variable-length bytes until FX=0; 7 presence bits per byte; optional explicit bit->field mapping
-fspec_type = { "fspec" ~ ("->" ~ "(" ~ fspec_mapping_list ~ ")")? }
+// ASTERIX FSPEC: fspec(N, n) = up to N bits. n=8 => 7 presence + 1 FX per byte; n=0 => no blocking (N consecutive presence bits).
+fspec_size = { "(" ~ num ~ "," ~ num ~ ")" }
+fspec_type = { "fspec" ~ fspec_size ~ ("->" ~ "(" ~ fspec_mapping_list ~ ")")? }
 fspec_mapping_list = { (fspec_bit_mapping ~ ",")* ~ fspec_bit_mapping }
 fspec_bit_mapping = { num ~ ":" ~ ident }
 // Spare/reserved bits (zero on encode)
@@ -109,6 +114,7 @@ type_spec_inner = {
     | reserved_type
     | bitfield_type
     | padding_bits_type
+    | octets_fx_type
     | struct_ref_type
 }
 

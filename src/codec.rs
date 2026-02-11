@@ -63,7 +63,7 @@ impl Codec {
         };
         let mut cursor = Cursor::new(bytes);
         let mut ctx = DecodeContext::default();
-        let values = match self.decode_message_fields_no_validate(&mut cursor, msg.fields.as_slice(), &mut ctx) {
+        let values = match self.decode_message_fields_no_validate(&mut cursor, message_name, msg.fields.as_slice(), &mut ctx) {
             Ok(v) => v,
             Err(e) => return (cursor.position() as usize, Err(e)),
         };
@@ -225,12 +225,14 @@ impl Codec {
     fn decode_message_fields_no_validate(
         &self,
         r: &mut Cursor<&[u8]>,
+        message_name: &str,
         fields: &[MessageField],
         ctx: &mut DecodeContext,
     ) -> Result<HashMap<String, Value>, CodecError> {
         // Bit packing is local to a message: reset bit cursor for this scope.
         let saved_bits = ctx.bit_read;
         ctx.bit_read = BitReadState::default();
+        ctx.current_message_name = Some(message_name.to_string());
         let mut out = HashMap::new();
         for f in fields {
             if let Some(ref cond) = f.condition {
@@ -240,12 +242,15 @@ impl Codec {
                     continue;
                 }
             }
+            ctx.current_field_name = Some(f.name.clone());
             let v = self
                 .decode_type_spec(r, &f.type_spec, &self.resolved.protocol.structs, ctx)
                 .map_err(|e| CodecError::Validation(format!("field {}: {}", f.name, e)))?;
             ctx.set(f.name.clone(), v.clone());
             out.insert(f.name.clone(), v);
         }
+        ctx.current_message_name = None;
+        ctx.current_field_name = None;
         if !ctx.bit_read.is_aligned() {
             ctx.bit_read = saved_bits;
             return Err(CodecError::Validation(
@@ -301,12 +306,20 @@ impl Codec {
                 i += 1;
                 continue;
             }
-            if matches!(&f.type_spec, TypeSpec::Fspec | TypeSpec::FspecWithMapping(_)) {
+            if let TypeSpec::FspecWithMapping { max_bits, bits_per_block, .. } = &f.type_spec {
                 let optional_indices = self.collect_following_optionals_message(fields, i + 1, ctx);
-                let fspec_bytes = self.build_fspec_bytes_message(fields, &optional_indices, ctx);
+                let mut fspec_bytes = self.build_fspec_bytes_message(fields, &optional_indices, ctx, *bits_per_block);
+                let max_bytes = ((*max_bits + 7) / 8) as usize;
+                fspec_bytes.truncate(max_bytes);
+                if *bits_per_block != 0 && !fspec_bytes.is_empty() {
+                    let last = fspec_bytes.len() - 1;
+                    fspec_bytes[last] &= 0xFE;
+                }
+                let bits_per_byte = if *bits_per_block == 0 { 8 } else { 7 };
                 w.write_all(&fspec_bytes)?;
                 for (bit_j, &idx) in optional_indices.iter().enumerate() {
-                    if fspec_bytes.get(bit_j / 7).map(|&b| (b >> (bit_j % 7)) & 1).unwrap_or(0) != 0 {
+                    let bit_in_byte = 7 - (bit_j % bits_per_byte);
+                    if fspec_bytes.get(bit_j / bits_per_byte).map(|&b| (b >> bit_in_byte) & 1).unwrap_or(0) != 0 {
                         let o = &fields[idx];
                         let v = ctx.get(&o.name).cloned().unwrap_or_else(|| self.default_for_type_spec(&o.type_spec));
                         if let TypeSpec::Optional(elem) = &o.type_spec {
@@ -365,25 +378,28 @@ impl Codec {
         bitmap
     }
 
-    /// Build ASTERIX FSPEC bytes: 7 presence bits per byte, bit 7 (FX) = 1 if more bytes follow.
-    fn build_fspec_bytes_message(&self, fields: &[MessageField], indices: &[usize], ctx: &EncodeContext) -> Vec<u8> {
+    /// Build FSPEC bytes: bits_per_block=8 => 7 presence + 1 FX per byte; 0 => 8 presence bits per byte (no FX).
+    fn build_fspec_bytes_message(&self, fields: &[MessageField], indices: &[usize], ctx: &EncodeContext, bits_per_block: u32) -> Vec<u8> {
         let mut bits = Vec::with_capacity(indices.len());
         for &idx in indices {
             let v = ctx.get(&fields[idx].name);
             let present = v.map(|v| v.as_list().map(|l| !l.is_empty()).unwrap_or(false)).unwrap_or(false);
             bits.push(present);
         }
+        let per_byte = if bits_per_block == 0 { 8 } else { 7 };
         let mut out = Vec::new();
-        for chunk in bits.chunks(7) {
+        for chunk in bits.chunks(per_byte) {
             let mut byte = 0u8;
             for (j, &present) in chunk.iter().enumerate() {
                 if present {
-                    byte |= 1 << j;
+                    byte |= 1 << (7 - j);
                 }
             }
-            let more = out.len() * 7 + chunk.len() < bits.len();
-            if more {
-                byte |= 0x80;
+            if bits_per_block != 0 {
+                let more = out.len() * 7 + chunk.len() < bits.len();
+                if more {
+                    byte |= 0x01;
+                }
             }
             out.push(byte);
         }
@@ -496,9 +512,8 @@ impl Codec {
                 Ok(Value::U64(v))
             }
             TypeSpec::SizedInt(bt, n) => {
-                if ctx.bit_read.is_aligned() {
-                    self.decode_sized_int(r, bt, *n)
-                } else {
+                // Sub-byte sizes (e.g. 6-bit chars) must use read_bits so they pack; byte-aligned full bytes use decode_sized_int.
+                if *n < 8 || !ctx.bit_read.is_aligned() {
                     let raw = self.read_bits(r, ctx, *n)?;
                     // Reuse the sign-extension and base-type casting rules of decode_sized_int.
                     let mask = if *n >= 64 { u64::MAX } else { (1u64 << *n) - 1 };
@@ -525,6 +540,8 @@ impl Codec {
                         BaseType::I64 => Value::I64(val),
                         _ => Value::U64(raw),
                     })
+                } else {
+                    self.decode_sized_int(r, bt, *n)
                 }
             }
             TypeSpec::LengthOf(_) => {
@@ -547,20 +564,27 @@ impl Codec {
                     4 => self.read_u32(r)? as u64,
                     _ => return Err(CodecError::Validation("presence_bits(n): n must be 1, 2, or 4".to_string())),
                 };
-                ctx.presence = Some(PresenceState::Bitmap { value: bitmap, bit_index: 0 });
+                ctx.presence_stack.push(PresenceState::Bitmap { value: bitmap, bit_index: 0 });
                 Ok(Value::U64(bitmap))
             }
-            TypeSpec::Fspec | TypeSpec::FspecWithMapping(_) => {
+            TypeSpec::FspecWithMapping { max_bits, bits_per_block, .. } => {
                 self.ensure_decode_bit_aligned(ctx)?;
+                let max_bytes = ((*max_bits + 7) / 8) as usize;
                 let mut bytes = Vec::new();
-                loop {
-                    let b = r.read_u8()?;
-                    bytes.push(b);
-                    if b & 0x80 == 0 {
-                        break;
+                if *bits_per_block == 0 {
+                    for _ in 0..max_bytes {
+                        bytes.push(r.read_u8()?);
+                    }
+                } else {
+                    loop {
+                        let b = r.read_u8()?;
+                        bytes.push(b);
+                        if b & 0x01 == 0 || bytes.len() >= max_bytes {
+                            break;
+                        }
                     }
                 }
-                ctx.presence = Some(PresenceState::Fspec { bytes: bytes.clone(), bit_index: 0 });
+                ctx.presence_stack.push(PresenceState::Fspec { bytes: bytes.clone(), bit_index: 0, bits_per_block: *bits_per_block });
                 Ok(Value::Bytes(bytes))
             }
             TypeSpec::PaddingBits(n) => {
@@ -596,7 +620,20 @@ impl Codec {
             }
             TypeSpec::RepList(elem) => {
                 self.ensure_decode_bit_aligned(ctx)?;
-                let n = self.read_u8(r)? as u64;
+                let n_raw = self.read_u8(r)? as u64;
+                // Cap by remaining bytes when element has fixed size to avoid reading past buffer
+                let entry_bytes = match elem.as_ref() {
+                    TypeSpec::StructRef(name) if name == "MessageCountEntry" || name == "PlotCountValue" => 2,
+                    TypeSpec::StructRef(name) if name == "BdsRegisterEntry" => 8,
+                    _ => 0,
+                };
+                let n = if entry_bytes > 0 {
+                    let remaining = r.get_ref().len().saturating_sub(r.position() as usize);
+                    let max_n = (remaining / entry_bytes) as u64;
+                    n_raw.min(max_n)
+                } else {
+                    n_raw
+                };
                 let mut list = Vec::with_capacity(n as usize);
                 for i in 0..n {
                     let v = self
@@ -606,20 +643,69 @@ impl Codec {
                 }
                 Ok(Value::List(list))
             }
+            TypeSpec::OctetsFx => {
+                self.ensure_decode_bit_aligned(ctx)?;
+                let mut bytes = Vec::new();
+                loop {
+                    let b = r.read_u8()?;
+                    bytes.push(b);
+                    if b & 0x80 == 0 {
+                        break;
+                    }
+                }
+                Ok(Value::Bytes(bytes))
+            }
             TypeSpec::Optional(elem) => {
                 self.ensure_decode_bit_aligned(ctx)?;
-                let present = if let Some(ref mut pre) = ctx.presence {
+                let presence_stack_len = ctx.presence_stack.len();
+                let msg_name_opt = ctx.current_message_name.clone();
+                let field_name_opt = ctx.current_field_name.clone();
+                let present = if let Some(ref mut pre) = ctx.presence_stack.last_mut() {
                     match pre {
                         PresenceState::Bitmap { value, bit_index } => {
                             let bit = (*value >> *bit_index) & 1;
                             *bit_index += 1;
                             bit != 0
                         }
-                        PresenceState::Fspec { bytes, bit_index } => {
-                            let byte_idx = *bit_index / 7;
-                            let bit_idx = *bit_index % 7;
-                            *bit_index += 1;
-                            let bit = if byte_idx < bytes.len() { (bytes[byte_idx] >> bit_idx) & 1 } else { 0 };
+                        PresenceState::Fspec { bytes, bit_index, bits_per_block } => {
+                            let bits_per_byte = if *bits_per_block == 0 { 8 } else { 7 };
+                            // At message level (single FSPEC on stack), use explicit mapping so each optional
+                            // reads the correct FSPEC bit by field name. This fixes I048/130 when field order
+                            // or bit consumption could otherwise diverge from the UAP.
+                            let use_mapping = presence_stack_len == 1
+                                && msg_name_opt.is_some()
+                                && field_name_opt.is_some();
+                            let bit = if use_mapping {
+                                let msg_name = msg_name_opt.as_ref().unwrap();
+                                let field_name = field_name_opt.as_ref().unwrap();
+                                if let Some(mapping) = self.resolved.fspec_mapping_message(msg_name) {
+                                    if let Some(bit_pos) = mapping.bit_for_field(field_name) {
+                                        let byte_idx = (bit_pos as usize) / bits_per_byte;
+                                        let bit_idx = (bit_pos as usize) % bits_per_byte;
+                                        let b = if byte_idx < bytes.len() {
+                                            (bytes[byte_idx] >> (7 - bit_idx)) & 1
+                                        } else {
+                                            0
+                                        };
+                                        b
+                                    } else {
+                                        let byte_idx = *bit_index / bits_per_byte;
+                                        let bit_idx = *bit_index % bits_per_byte;
+                                        *bit_index += 1;
+                                        if byte_idx < bytes.len() { (bytes[byte_idx] >> (7 - bit_idx)) & 1 } else { 0 }
+                                    }
+                                } else {
+                                    let byte_idx = *bit_index / bits_per_byte;
+                                    let bit_idx = *bit_index % bits_per_byte;
+                                    *bit_index += 1;
+                                    if byte_idx < bytes.len() { (bytes[byte_idx] >> (7 - bit_idx)) & 1 } else { 0 }
+                                }
+                            } else {
+                                let byte_idx = *bit_index / bits_per_byte;
+                                let bit_idx = *bit_index % bits_per_byte;
+                                *bit_index += 1;
+                                if byte_idx < bytes.len() { (bytes[byte_idx] >> (7 - bit_idx)) & 1 } else { 0 }
+                            };
                             bit != 0
                         }
                     }
@@ -689,7 +775,7 @@ impl Codec {
                 self.write_u32(w, val as u32)?;
                 Ok(())
             }
-            TypeSpec::PresenceBits(_) | TypeSpec::Fspec | TypeSpec::FspecWithMapping(_) => {
+            TypeSpec::PresenceBits(_) | TypeSpec::FspecWithMapping { .. } => {
                 // Written by encode_message_fields / encode_struct when they see this field and look ahead.
                 Ok(())
             }
@@ -731,6 +817,21 @@ impl Codec {
                 }
                 Ok(())
             }
+            TypeSpec::OctetsFx => {
+                self.ensure_encode_bit_aligned(ctx)?;
+                let bytes = match v {
+                    Value::Bytes(b) => b.clone(),
+                    _ => vec![],
+                };
+                for (i, &b) in bytes.iter().enumerate() {
+                    let last = i == bytes.len() - 1;
+                    w.write_all(&[if last { b & 0x7f } else { b | 0x80 }])?;
+                }
+                if bytes.is_empty() {
+                    w.write_all(&[0])?;
+                }
+                Ok(())
+            }
             TypeSpec::Optional(elem) => {
                 self.ensure_encode_bit_aligned(ctx)?;
                 if v.as_list().map(|s| s.is_empty()).unwrap_or(true) {
@@ -751,8 +852,9 @@ impl Codec {
         structs: &[StructSection],
         ctx: &mut DecodeContext,
     ) -> Result<Value, CodecError> {
-        // Bit packing is local to a struct: reset bit cursor for this scope.
+        // Bit packing is local to a struct; presence uses a stack: any FSPEC/presence_bits decoded inside this struct push, we pop on exit.
         let saved_bits = ctx.bit_read;
+        let presence_stack_len = ctx.presence_stack.len();
         ctx.bit_read = BitReadState::default();
         let mut out = HashMap::new();
         for f in &s.fields {
@@ -773,12 +875,19 @@ impl Codec {
         // Ensure the struct ends on a byte boundary (padding_bits should make it so).
         if !ctx.bit_read.is_aligned() {
             ctx.bit_read = saved_bits;
+            while ctx.presence_stack.len() > presence_stack_len {
+                ctx.presence_stack.pop();
+            }
             return Err(CodecError::Validation(format!(
                 "struct {}: bitfield/padding_bits not byte-aligned at end",
                 s.name
             )));
         }
         ctx.bit_read = saved_bits;
+        // Pop any presence state pushed while decoding this struct (e.g. nested fspec).
+        while ctx.presence_stack.len() > presence_stack_len {
+            ctx.presence_stack.pop();
+        }
         Ok(Value::Struct(out))
     }
 
@@ -827,12 +936,20 @@ impl Codec {
                 i += 1;
                 continue;
             }
-            if matches!(&f.type_spec, TypeSpec::Fspec | TypeSpec::FspecWithMapping(_)) {
+            if let TypeSpec::FspecWithMapping { max_bits, bits_per_block, .. } = &f.type_spec {
                 let optional_indices = self.collect_following_optionals_struct(&s.fields, i + 1, ctx);
-                let fspec_bytes = self.build_fspec_bytes_struct(&s.fields, &optional_indices, ctx);
+                let mut fspec_bytes = self.build_fspec_bytes_struct(&s.fields, &optional_indices, ctx, *bits_per_block);
+                let max_bytes = ((*max_bits + 7) / 8) as usize;
+                fspec_bytes.truncate(max_bytes);
+                if *bits_per_block != 0 && !fspec_bytes.is_empty() {
+                    let last = fspec_bytes.len() - 1;
+                    fspec_bytes[last] &= 0xFE;
+                }
+                let bits_per_byte = if *bits_per_block == 0 { 8 } else { 7 };
                 w.write_all(&fspec_bytes)?;
                 for (bit_j, &idx) in optional_indices.iter().enumerate() {
-                    if fspec_bytes.get(bit_j / 7).map(|&b| (b >> (bit_j % 7)) & 1).unwrap_or(0) != 0 {
+                    let bit_in_byte = 7 - (bit_j % bits_per_byte);
+                    if fspec_bytes.get(bit_j / bits_per_byte).map(|&b| (b >> bit_in_byte) & 1).unwrap_or(0) != 0 {
                         let o = &s.fields[idx];
                         let v = ctx.get(&o.name).cloned().unwrap_or_else(|| self.default_for_type_spec(&o.type_spec));
                         if let TypeSpec::Optional(elem) = &o.type_spec {
@@ -892,24 +1009,27 @@ impl Codec {
         bitmap
     }
 
-    fn build_fspec_bytes_struct(&self, fields: &[StructField], indices: &[usize], ctx: &EncodeContext) -> Vec<u8> {
+    fn build_fspec_bytes_struct(&self, fields: &[StructField], indices: &[usize], ctx: &EncodeContext, bits_per_block: u32) -> Vec<u8> {
         let mut bits = Vec::with_capacity(indices.len());
         for &idx in indices {
             let v = ctx.get(&fields[idx].name);
             let present = v.map(|v| v.as_list().map(|l| !l.is_empty()).unwrap_or(false)).unwrap_or(false);
             bits.push(present);
         }
+        let per_byte = if bits_per_block == 0 { 8 } else { 7 };
         let mut out = Vec::new();
-        for chunk in bits.chunks(7) {
+        for chunk in bits.chunks(per_byte) {
             let mut byte = 0u8;
             for (j, &present) in chunk.iter().enumerate() {
                 if present {
-                    byte |= 1 << j;
+                    byte |= 1 << (7 - j);
                 }
             }
-            let more = out.len() * 7 + chunk.len() < bits.len();
-            if more {
-                byte |= 0x80;
+            if bits_per_block != 0 {
+                let more = out.len() * 7 + chunk.len() < bits.len();
+                if more {
+                    byte |= 0x01;
+                }
             }
             out.push(byte);
         }
@@ -927,8 +1047,9 @@ impl Codec {
             TypeSpec::Base(_) => Value::U64(0),
             TypeSpec::Padding(_) | TypeSpec::Reserved(_) | TypeSpec::PaddingBits(_) => Value::Padding,
             TypeSpec::List(_) => Value::List(vec![]),
+            TypeSpec::OctetsFx => Value::Bytes(vec![]),
             TypeSpec::StructRef(_) => Value::Struct(HashMap::new()),
-            TypeSpec::Fspec | TypeSpec::FspecWithMapping(_) => Value::Bytes(vec![]),
+            TypeSpec::FspecWithMapping { .. } => Value::Bytes(vec![]),
             _ => Value::U64(0),
         }
     }
@@ -940,7 +1061,10 @@ impl Codec {
         };
         match c {
             Constraint::Range(intervals) => {
-                let n = v.as_i64().ok_or_else(|| CodecError::Validation("expected numeric for range".to_string()))?;
+                let n = match v.as_i64() {
+                    Some(x) => x,
+                    None => return Ok(()), // non-numeric (Bytes, List, Struct): skip range check
+                };
                 let in_any = intervals.iter().any(|(min, max)| n >= *min && n <= *max);
                 if !in_any {
                     return Err(CodecError::Validation(format!(
@@ -952,6 +1076,9 @@ impl Codec {
             }
             Constraint::Enum(allowed) => {
                 let n = v.as_i64();
+                if n.is_none() {
+                    return Ok(()); // non-numeric: skip enum check
+                }
                 let ok = allowed.iter().any(|l| l.as_i64() == n);
                 if !ok {
                     return Err(CodecError::Validation("value not in allowed enum".to_string()));
@@ -1216,7 +1343,8 @@ impl Codec {
 #[derive(Clone)]
 enum PresenceState {
     Bitmap { value: u64, bit_index: usize },
-    Fspec { bytes: Vec<u8>, bit_index: usize },
+    /// bits_per_block: 8 = 7 presence + 1 FX per byte; 0 = no blocking (8 presence bits per byte).
+    Fspec { bytes: Vec<u8>, bit_index: usize, bits_per_block: u32 },
 }
 
 /// Bit-level packing state for decoding (`bitfield(n)` / `padding_bits(n)`).
@@ -1263,9 +1391,12 @@ impl BitWriteState {
 #[derive(Default)]
 struct DecodeContext {
     values: HashMap<String, Value>,
-    /// When decoding: after presence_bits(n) or fspec, following optionals use bits from this.
-    presence: Option<PresenceState>,
+    /// When decoding: after presence_bits(n) or fspec we push; nested structs push again; on struct exit we pop.
+    presence_stack: Vec<PresenceState>,
     bit_read: BitReadState,
+    /// When decoding message fields: set so Optional can read the correct FSPEC bit by field name (message-level mapping only).
+    current_message_name: Option<String>,
+    current_field_name: Option<String>,
 }
 
 impl DecodeContext {

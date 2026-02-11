@@ -20,7 +20,8 @@ enum WalkPresence {
     #[default]
     None,
     Bitmap(u64, usize),
-    Fspec(Vec<u8>, usize),
+    /// bits_per_block: 8 = 7+FX per byte; 0 = 8 presence bits per byte (no FX).
+    Fspec(Vec<u8>, usize, u32),
 }
 
 /// Context for walk: stores numeric field values and optional presence state.
@@ -308,20 +309,29 @@ impl<'a> BinaryWalker<'a> {
                 let bitmap = read_bitmap_n(self.data, &mut self.pos, self.endianness, *n)?;
                 self.ctx.presence = WalkPresence::Bitmap(bitmap, 0);
             }
-            TypeSpec::Fspec | TypeSpec::FspecWithMapping(_) => {
+            TypeSpec::FspecWithMapping { max_bits, bits_per_block, .. } => {
+                let max_bytes = ((*max_bits + 7) / 8) as usize;
                 let mut bytes = Vec::new();
-                loop {
-                    if self.pos >= self.data.len() {
+                if *bits_per_block == 0 {
+                    if self.pos + max_bytes > self.data.len() {
                         return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
                     }
-                    let b = self.data[self.pos];
-                    self.pos += 1;
-                    bytes.push(b);
-                    if b & 0x80 == 0 {
-                        break;
+                    bytes.extend_from_slice(&self.data[self.pos..self.pos + max_bytes]);
+                    self.pos += max_bytes;
+                } else {
+                    loop {
+                        if self.pos >= self.data.len() {
+                            return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                        }
+                        let b = self.data[self.pos];
+                        self.pos += 1;
+                        bytes.push(b);
+                        if b & 0x01 == 0 || bytes.len() >= max_bytes {
+                            break;
+                        }
                     }
                 }
-                self.ctx.presence = WalkPresence::Fspec(bytes, 0);
+                self.ctx.presence = WalkPresence::Fspec(bytes, 0, *bits_per_block);
             }
             TypeSpec::PaddingBits(n) => {
                 let byte_len = ((*n + 7) / 8) as usize;
@@ -363,6 +373,15 @@ impl<'a> BinaryWalker<'a> {
                     self.skip_type_spec(elem, None)?;
                 }
             }
+            TypeSpec::OctetsFx => {
+                while self.pos < self.data.len() {
+                    let b = self.data[self.pos];
+                    self.pos += 1;
+                    if b & 0x80 == 0 {
+                        break;
+                    }
+                }
+            }
             TypeSpec::Optional(elem) => {
                 let present = match &mut self.ctx.presence {
                     WalkPresence::Bitmap(bitmap, i) => {
@@ -370,11 +389,12 @@ impl<'a> BinaryWalker<'a> {
                         *i += 1;
                         bit != 0
                     }
-                    WalkPresence::Fspec(bytes, i) => {
-                        let byte_idx = *i / 7;
-                        let bit_idx = *i % 7;
+                    WalkPresence::Fspec(bytes, i, bits_per_block) => {
+                        let bits_per_byte = if *bits_per_block == 0 { 8 } else { 7 };
+                        let byte_idx = *i / bits_per_byte;
+                        let bit_idx = *i % bits_per_byte;
                         *i += 1;
-                        let bit = if byte_idx < bytes.len() { (bytes[byte_idx] >> bit_idx) & 1 } else { 0 };
+                        let bit = if byte_idx < bytes.len() { (bytes[byte_idx] >> (7 - bit_idx)) & 1 } else { 0 };
                         bit != 0
                     }
                     WalkPresence::None => read_u8(self.data, &mut self.pos)? != 0,
@@ -471,20 +491,29 @@ impl<'a> BinaryWalkerMut<'a> {
                 let bitmap = read_bitmap_n(self.data, &mut self.pos, self.endianness, *n)?;
                 self.ctx.presence = WalkPresence::Bitmap(bitmap, 0);
             }
-            TypeSpec::Fspec | TypeSpec::FspecWithMapping(_) => {
+            TypeSpec::FspecWithMapping { max_bits, bits_per_block, .. } => {
+                let max_bytes = ((*max_bits + 7) / 8) as usize;
                 let mut bytes = Vec::new();
-                loop {
-                    if self.pos >= self.data.len() {
+                if *bits_per_block == 0 {
+                    if self.pos + max_bytes > self.data.len() {
                         return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
                     }
-                    let b = self.data[self.pos];
-                    self.pos += 1;
-                    bytes.push(b);
-                    if b & 0x80 == 0 {
-                        break;
+                    bytes.extend_from_slice(&self.data[self.pos..self.pos + max_bytes]);
+                    self.pos += max_bytes;
+                } else {
+                    loop {
+                        if self.pos >= self.data.len() {
+                            return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                        }
+                        let b = self.data[self.pos];
+                        self.pos += 1;
+                        bytes.push(b);
+                        if b & 0x01 == 0 || bytes.len() >= max_bytes {
+                            break;
+                        }
                     }
                 }
-                self.ctx.presence = WalkPresence::Fspec(bytes, 0);
+                self.ctx.presence = WalkPresence::Fspec(bytes, 0, *bits_per_block);
             }
             TypeSpec::PaddingBits(n) => {
                 let byte_len = ((*n + 7) / 8) as usize;
@@ -536,6 +565,15 @@ impl<'a> BinaryWalkerMut<'a> {
                     self.zero_or_skip_type_spec(elem, None)?;
                 }
             }
+            TypeSpec::OctetsFx => {
+                while self.pos < self.data.len() {
+                    let b = self.data[self.pos];
+                    self.pos += 1;
+                    if b & 0x80 == 0 {
+                        break;
+                    }
+                }
+            }
             TypeSpec::Optional(elem) => {
                 let present = match &mut self.ctx.presence {
                     WalkPresence::Bitmap(bitmap, i) => {
@@ -543,11 +581,12 @@ impl<'a> BinaryWalkerMut<'a> {
                         *i += 1;
                         bit != 0
                     }
-                    WalkPresence::Fspec(bytes, i) => {
-                        let byte_idx = *i / 7;
-                        let bit_idx = *i % 7;
+                    WalkPresence::Fspec(bytes, i, bits_per_block) => {
+                        let bits_per_byte = if *bits_per_block == 0 { 8 } else { 7 };
+                        let byte_idx = *i / bits_per_byte;
+                        let bit_idx = *i % bits_per_byte;
                         *i += 1;
-                        let bit = if byte_idx < bytes.len() { (bytes[byte_idx] >> bit_idx) & 1 } else { 0 };
+                        let bit = if byte_idx < bytes.len() { (bytes[byte_idx] >> (7 - bit_idx)) & 1 } else { 0 };
                         bit != 0
                     }
                     WalkPresence::None => read_u8(self.data, &mut self.pos)? != 0,
@@ -585,20 +624,29 @@ impl<'a> BinaryWalkerMut<'a> {
                 let bitmap = read_bitmap_n(self.data, &mut self.pos, self.endianness, *n)?;
                 self.ctx.presence = WalkPresence::Bitmap(bitmap, 0);
             }
-            TypeSpec::Fspec | TypeSpec::FspecWithMapping(_) => {
+            TypeSpec::FspecWithMapping { max_bits, bits_per_block, .. } => {
+                let max_bytes = ((*max_bits + 7) / 8) as usize;
                 let mut bytes = Vec::new();
-                loop {
-                    if self.pos >= self.data.len() {
+                if *bits_per_block == 0 {
+                    if self.pos + max_bytes > self.data.len() {
                         return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
                     }
-                    let b = self.data[self.pos];
-                    self.pos += 1;
-                    bytes.push(b);
-                    if b & 0x80 == 0 {
-                        break;
+                    bytes.extend_from_slice(&self.data[self.pos..self.pos + max_bytes]);
+                    self.pos += max_bytes;
+                } else {
+                    loop {
+                        if self.pos >= self.data.len() {
+                            return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                        }
+                        let b = self.data[self.pos];
+                        self.pos += 1;
+                        bytes.push(b);
+                        if b & 0x01 == 0 || bytes.len() >= max_bytes {
+                            break;
+                        }
                     }
                 }
-                self.ctx.presence = WalkPresence::Fspec(bytes, 0);
+                self.ctx.presence = WalkPresence::Fspec(bytes, 0, *bits_per_block);
             }
             TypeSpec::PaddingBits(n) => {
                 let byte_len = ((*n + 7) / 8) as usize;
@@ -649,6 +697,15 @@ impl<'a> BinaryWalkerMut<'a> {
                     self.skip_type_spec(elem, None)?;
                 }
             }
+            TypeSpec::OctetsFx => {
+                while self.pos < self.data.len() {
+                    let b = self.data[self.pos];
+                    self.pos += 1;
+                    if b & 0x80 == 0 {
+                        break;
+                    }
+                }
+            }
             TypeSpec::Optional(elem) => {
                 let present = match &mut self.ctx.presence {
                     WalkPresence::Bitmap(bitmap, i) => {
@@ -656,11 +713,12 @@ impl<'a> BinaryWalkerMut<'a> {
                         *i += 1;
                         bit != 0
                     }
-                    WalkPresence::Fspec(bytes, i) => {
-                        let byte_idx = *i / 7;
-                        let bit_idx = *i % 7;
+                    WalkPresence::Fspec(bytes, i, bits_per_block) => {
+                        let bits_per_byte = if *bits_per_block == 0 { 8 } else { 7 };
+                        let byte_idx = *i / bits_per_byte;
+                        let bit_idx = *i % bits_per_byte;
                         *i += 1;
-                        let bit = if byte_idx < bytes.len() { (bytes[byte_idx] >> bit_idx) & 1 } else { 0 };
+                        let bit = if byte_idx < bytes.len() { (bytes[byte_idx] >> (7 - bit_idx)) & 1 } else { 0 };
                         bit != 0
                     }
                     WalkPresence::None => read_u8(self.data, &mut self.pos)? != 0,

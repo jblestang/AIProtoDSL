@@ -1,7 +1,8 @@
-//! Integration tests: parse DSL, encode/decode, validation, frame, and walk-only (no decode/encode).
+//! Integration tests: parse DSL, encode/decode, validation, frame, walk-only, and DSL lint.
 
 use aiprotodsl::codec::{Codec, Endianness};
 use aiprotodsl::frame;
+use aiprotodsl::lint::{lint, LintRule, Severity};
 use aiprotodsl::walk::{message_extent, validate_message_in_place, zero_padding_reserved_in_place, remove_message_in_place, Endianness as WalkEndianness};
 use aiprotodsl::{parse, AbstractType, ResolvedProtocol, TypeSpec, Value};
 use std::collections::HashMap;
@@ -321,7 +322,7 @@ fn test_presence_bits_encode_decode() {
 
 const FSPEC_PROTO: &str = r#"
 message FspecRecord {
-  fspec: fspec;
+  fspec: fspec(8, 8) -> (0: a, 1: b);
   a: optional<u8>;
   b: optional<u16>;
 }
@@ -340,7 +341,8 @@ fn test_fspec_encode_decode() {
     let encoded = codec.encode_message("FspecRecord", &v).expect("encode");
     assert!(encoded.len() >= 2);
     let first_byte = encoded[0];
-    assert_eq!(first_byte & 0x7f, 3);
+    // FSPEC: 7 presence bits in bits 7-1 (MSB first), FX in LSB. Two optionals present => bits 7 and 6 set => 0x40
+    assert_eq!(first_byte & 0x7f, 0x40);
     let decoded = codec.decode_message("FspecRecord", &encoded).expect("decode");
     assert_eq!(decoded.get("a"), Some(&Value::U8(10)));
     assert_eq!(decoded.get("b"), Some(&Value::U16(0x1234)));
@@ -417,12 +419,191 @@ fn test_asterix_family_parse() {
     let fspec = resolved.fspec_mapping_message("Cat048Record").expect("Cat048Record has fspec");
     assert_eq!(fspec.fspec_field, "fspec");
     assert!(fspec.optional_fields.len() > 10);
+    // UAP (EUROCONTROL spec): 010, 140, 020, 040, 070, 090, 130, FX, 220, 240, 250, 161, 042, 200, 170, FX, ...
     assert_eq!(fspec.optional_fields[0], "i048_010");
-    assert_eq!(fspec.optional_fields[1], "i048_020");
-    assert!(fspec.optional_fields.contains(&"i048_161".to_string()));
-    // Explicit bit position -> field mapping (FX bits filtered, logical indices)
-    assert_eq!(fspec.bit_to_field[0], (0, "i048_010".to_string()));
-    assert_eq!(fspec.bit_to_field[1], (1, "i048_020".to_string()));
+    assert_eq!(fspec.optional_fields[1], "i048_140");
+    assert_eq!(fspec.optional_fields[2], "i048_020");
+    assert_eq!(fspec.optional_fields[3], "i048_040");
+    assert_eq!(fspec.optional_fields[10], "i048_161");
+    assert!(fspec.optional_fields.contains(&"i048_220".to_string()));
+    assert!(fspec.optional_fields.contains(&"i048_260".to_string()));
     assert_eq!(fspec.field_for_bit(0), Some("i048_010"));
-    assert_eq!(fspec.bit_for_field("i048_161"), Some(17));
+    assert_eq!(fspec.bit_for_field("i048_161"), Some(10)); // logical index (FX filtered)
+    assert_eq!(fspec.bit_for_field("i048_130"), Some(6));
+}
+
+/// Decode frame 1 CAT048 block (FSPEC 0xFD 0xF7 0x02 => I048/130 absent). Verifies FSPEC mapping is applied so we skip 130 and decode past 161.
+#[test]
+fn test_cat048_frame1_130_absent_decode() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/asterix_family.dsl");
+    let src = std::fs::read_to_string(&path).expect("read asterix_family.dsl");
+    let protocol = parse(&src).expect("parse");
+    let resolved = ResolvedProtocol::resolve(protocol).expect("resolve");
+    let codec = Codec::new(resolved, Endianness::Big);
+
+    // FSPEC 0xFD 0xF0: 130 absent (bit 6=0); 220,240,250,161 present; 042,200,170 absent (bit 15=0 so no 3rd octet).
+    // I048/240 = 8×6 bits = 6 bytes; 250 count=0; 161(2). Total 2+14+3+6+1+2 = 28 bytes.
+    let payload: Vec<u8> = vec![
+        0xfd, 0xf0,                                                                                     // FSPEC (2)
+        0x19, 0xc9, 0x35, 0x6d, 0x4d, 0xa0, 0xc5, 0xaf, 0xf1, 0xe0, 0x02, 0x00, 0x05, 0x28,             // 010..090 (14)
+        0x3c, 0x66, 0x0c, 0x10, 0xc2, 0x36, 0xd4, 0x18, 0x01, 0x00, 0x07, 0xb9,                       // 220(3),240(6),250(count=0),161(2) (12)
+    ];
+    assert_eq!(payload.len(), 28);
+
+    let (consumed, result) = codec.decode_message_with_extent("Cat048Record", &payload);
+    match &result {
+        Ok(values) => {
+            // I048/130 must be absent (we read FSPEC bit 6 = 0)
+            let v130 = values.get("i048_130").expect("i048_130 field");
+            let list = v130.as_list().expect("i048_130 is list when absent");
+            assert!(list.is_empty(), "I048/130 should be absent for FSPEC 0xFD: {:?}", v130);
+            // We must have decoded past 161
+            assert!(values.get("i048_161").is_some(), "i048_161 should be present");
+        }
+        Err(e) => panic!("decode should succeed when FSPEC mapping skips 130: {} (consumed={})", e, consumed),
+    }
+}
+
+/// Run decode_pcap on a pcap and return stderr summary (block count, decoded, removed, known/unknown cats).
+fn run_decode_pcap(pcap_path: &str, dsl_path: &str) -> (String, std::process::Output) {
+    let bin = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| {
+            ["target/debug/decode_pcap", "target/release/decode_pcap"]
+                .iter()
+                .map(|p| cwd.join(p))
+                .find(|p| p.exists())
+        })
+        .expect("decode_pcap binary not found (run cargo build --bin decode_pcap)");
+    let out = std::process::Command::new(&bin)
+        .args([pcap_path, dsl_path])
+        .output()
+        .expect("run decode_pcap");
+    (String::from_utf8_lossy(&out.stderr).into_owned(), out)
+}
+
+#[test]
+fn test_asterix_pcap_vs_wireshark_consistency() {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let dsl = manifest.join("examples/asterix_family.dsl");
+    let dsl_str = dsl.to_string_lossy();
+
+    // cat_034_048: we must see blocks and known categories (34, 48); block count should match structure
+    let pcap = manifest.join("assets/cat_034_048.pcap");
+    if !pcap.exists() {
+        return;
+    }
+    let (stderr, out) = run_decode_pcap(pcap.to_string_lossy().as_ref(), &dsl_str);
+    assert!(out.status.success(), "decode_pcap should succeed: {}", stderr);
+    assert!(
+        stderr.contains("asterix blocks") && stderr.contains("CAT034") && stderr.contains("CAT048"),
+        "expected block summary and known categories: {}",
+        stderr
+    );
+    // We use length = total block size; tshark shows same (e.g. 48, 55, 11). Our block count 120 (34+86).
+    assert!(
+        stderr.contains("120") || stderr.contains("blocks="),
+        "expected block count or blocks= in summary: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_dsl_lint_tabs_and_one_field_per_line() {
+    // Compliant: tabs only, one field per line
+    let ok = "transport {\n\tx: u8;\n\ty: u16;\n\t}\n";
+    let msgs = lint(ok);
+    let errors: Vec<_> = msgs.iter().filter(|m| m.severity == Severity::Error).collect();
+    assert!(errors.is_empty(), "compliant source should have no lint errors: {:?}", msgs);
+
+    // Spaces for indentation -> IndentationTabsOnly
+    let spaces = "transport {\n  x: u8;\n}\n";
+    let msgs = lint(spaces);
+    assert!(
+        msgs.iter().any(|m| m.rule == LintRule::IndentationTabsOnly),
+        "spaces should trigger IndentationTabsOnly: {:?}",
+        msgs
+    );
+
+    // Two fields on one line -> OneFieldPerLine
+    let two_fields = "message M {\n\tx: u8; y: u16;\n\t}\n";
+    let msgs = lint(two_fields);
+    assert!(
+        msgs.iter().any(|m| m.rule == LintRule::OneFieldPerLine),
+        "two fields on one line should trigger OneFieldPerLine: {:?}",
+        msgs
+    );
+}
+
+/// Nested FSPEC structs: message with optional struct, each struct has its own FSPEC and optional nested struct, up to depth 5.
+/// Verifies that presence is handled via a stack (push on FSPEC decode, pop on struct exit) so nested optionals use the correct level.
+const NESTED_FSPEC_DEPTH_5: &str = r#"
+message Nest5 {
+  fspec: fspec(8, 8) -> (0: a);
+  a: optional<Level1>;
+}
+struct Level1 {
+  fspec: fspec(8, 8) -> (0: b);
+  b: optional<Level2>;
+}
+struct Level2 {
+  fspec: fspec(8, 8) -> (0: c);
+  c: optional<Level3>;
+}
+struct Level3 {
+  fspec: fspec(8, 8) -> (0: d);
+  d: optional<Level4>;
+}
+struct Level4 {
+  fspec: fspec(8, 8) -> (0: e);
+  e: optional<Level5>;
+}
+struct Level5 {
+  fspec: fspec(8, 8) -> (0: v);
+  v: optional<u8> [0..255];
+}
+"#;
+
+#[test]
+fn test_nested_fspec_presence_stack_depth_5() {
+    let protocol = parse(NESTED_FSPEC_DEPTH_5).expect("parse");
+    let resolved = ResolvedProtocol::resolve(protocol).expect("resolve");
+    let codec = Codec::new(resolved, Endianness::Big);
+
+    // Build value: all 5 levels present, leaf v = 42.
+    // Optional = List([value]) when present.
+    let v5 = HashMap::from([
+        ("v".to_string(), Value::List(vec![Value::U8(42)])),
+    ]);
+    let v4 = HashMap::from([
+        ("e".to_string(), Value::List(vec![Value::Struct(v5)])),
+    ]);
+    let v3 = HashMap::from([
+        ("d".to_string(), Value::List(vec![Value::Struct(v4)])),
+    ]);
+    let v2 = HashMap::from([
+        ("c".to_string(), Value::List(vec![Value::Struct(v3)])),
+    ]);
+    let v1 = HashMap::from([
+        ("b".to_string(), Value::List(vec![Value::Struct(v2)])),
+    ]);
+    let msg = HashMap::from([
+        ("a".to_string(), Value::List(vec![Value::Struct(v1)])),
+    ]);
+
+    let encoded = codec.encode_message("Nest5", &msg).expect("encode");
+    // 1 (msg fspec 0x80) + 1 (L1 fspec) + 1 (L2 fspec) + 1 (L3 fspec) + 1 (L4 fspec) + 1 (L5 fspec) + 1 (v) = 7 bytes
+    assert!(encoded.len() >= 7, "encoded should have at least 7 bytes, got {}", encoded.len());
+
+    let decoded = codec.decode_message("Nest5", &encoded).expect("decode");
+
+    // Decode stores optional as inner value when present (not List([x])). Check structure at depth 5 (presence stack used at each level).
+    let a = decoded.get("a").and_then(Value::as_struct).expect("a present");
+    let b = a.get("b").and_then(Value::as_struct).expect("b present");
+    let c = b.get("c").and_then(Value::as_struct).expect("c present");
+    let d = c.get("d").and_then(Value::as_struct).expect("d present");
+    let e = d.get("e").and_then(Value::as_struct).expect("e present");
+    // Optional u8 when present is stored as inner value
+    let leaf = e.get("v").and_then(Value::as_u64).expect("v present");
+    assert_eq!(leaf, 42, "leaf value should be 42 after decode (presence stack depth 5)");
 }

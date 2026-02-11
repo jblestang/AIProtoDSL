@@ -1,0 +1,28 @@
+---
+description: Apply linter when modifying the protocol DSL
+globs: "**/*.dsl"
+alwaysApply: false
+---
+
+# DSL style and linter
+
+When you create or edit `.dsl` files in this project:
+
+1. **Run the linter** after changes:
+   ```bash
+   cargo run --bin lint_dsl -- examples/asterix_family.dsl
+   ```
+   Or for the specific file you edited: `cargo run --bin lint_dsl -- path/to/file.dsl`
+
+2. **Auto-fix** style issues (indentation, one field per line, trailing whitespace, closing brace alone):
+   ```bash
+   cargo run --bin lint_dsl -- --fix path/to/file.dsl
+   ```
+
+3. **Conventions** enforced by the linter:
+   - Indentation: exactly one **tab** per depth level (no spaces).
+   - One field per line: at most one `;` per line.
+   - Closing `}` alone on its line (no field on the same line).
+   - No trailing whitespace.
+
+Fix any reported errors before considering the change complete.
