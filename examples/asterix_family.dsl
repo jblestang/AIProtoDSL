@@ -391,7 +391,7 @@ type Cat240Record {
 
 // Messages: one per ASTERIX record type; FSPEC and optional items per spec.
 message Cat001Record {
-	fspec: bitmap_presence(18, 7) -> (
+	fspec: bitmap_presence(24, 7) -> (
 	0: i001_010, 1: i001_020, 2: i001_040, 3: i001_042, 4: i001_030, 5: i001_050, 6: i001_070,
 	7: i001_080, 8: i001_090, 9: i001_100, 10: i001_120, 11: i001_130, 12: i001_131, 13: i001_141,
 	14: i001_161, 15: i001_170, 16: i001_200, 17: i001_210
@@ -419,7 +419,7 @@ message Cat001Record {
 
 
 message Cat002Record {
-	fspec: bitmap_presence(11, 7) -> (
+	fspec: bitmap_presence(14, 7) -> (
 	0: i002_010, 1: i002_000, 2: i002_020, 3: i002_030, 4: i002_041, 5: i002_050, 6: i002_060,
 	7: i002_070, 8: i002_100, 9: i002_090, 10: i002_080
 	);
@@ -499,7 +499,7 @@ message Cat048Record {
 
 
 message Cat240Record {
-	fspec: bitmap_presence(1, 7) -> (0: i240_010);
+	fspec: bitmap_presence(7, 7) -> (0: i240_010);
 	i240_010: optional<DataSourceId>;
 }
 
@@ -767,7 +767,7 @@ struct Com034 {
 }
 
 struct SystemConfig034 {
-	fspec: bitmap_presence(4, 7) -> (0: com, 1: psr, 2: ssr, 3: mds);
+	fspec: bitmap_presence(7, 7) -> (0: com, 1: psr, 2: ssr, 3: mds);
 	com: optional<Com034>;
 	psr: optional<u8> [0..255];
 	ssr: optional<u8> [0..255];
@@ -782,7 +782,7 @@ struct RdpXmt034 {
 	spare2: padding_bits(1);
 }
 struct SystemProcessingMode034 {
-	fspec: bitmap_presence(1, 7) -> (0: rdpxmt);
+	fspec: bitmap_presence(7, 7) -> (0: rdpxmt);
 	rdpxmt: optional<RdpXmt034>;
 }
 
