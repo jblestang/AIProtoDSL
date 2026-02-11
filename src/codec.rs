@@ -558,7 +558,20 @@ impl Codec {
             TypeSpec::BitmapPresence { total_bits, presence_per_block, .. } => {
                 let max_encoded_bits = if *presence_per_block == 0 { *total_bits } else { ((*total_bits + presence_per_block - 1) / presence_per_block) * (presence_per_block + 1) };
                 let max_bytes = ((max_encoded_bits + 7) / 8) as usize;
-                let bytes = if *presence_per_block == 0 {
+                let bytes = if *presence_per_block == 0 && *total_bits == 1 {
+                    // Single presence bit in same byte as preceding bitfields: LSB (bit 0) of current byte (e.g. EUROCONTROL I048/170 FX).
+                    if ctx.bit_read.next_bit == 8 {
+                        ctx.bit_read.cur = r.read_u8()?;
+                        ctx.bit_read.next_bit = 0;
+                    }
+                    let bit = (ctx.bit_read.cur & 1) as u64;
+                    ctx.bit_read.next_bit = 8; // consume the byte
+                    let mut b = vec![0u8; max_bytes];
+                    if bit != 0 {
+                        b[0] = 1 << 7; // optional reads (b[0] >> 7) & 1
+                    }
+                    b
+                } else if *presence_per_block == 0 {
                     // Consecutive presence bits (no FX); consume bit-by-bit from the current bit stream.
                     let mut b = vec![0u8; max_bytes];
                     for i in 0..*total_bits as usize {
@@ -903,6 +916,10 @@ impl Codec {
         structs: &[StructSection],
         ctx: &mut EncodeContext,
     ) -> Result<(), CodecError> {
+        // Flush current byte so nested struct (e.g. optional extension) does not lose it.
+        if ctx.bit_write.next_bit != 0 {
+            w.write_all(&[ctx.bit_write.cur])?;
+        }
         // Bit packing is local to a struct: reset bit cursor for this scope.
         let saved_bits = ctx.bit_write;
         ctx.bit_write = BitWriteState::default();
@@ -962,7 +979,12 @@ impl Codec {
                     bp_bytes[last] &= 0xFE;
                 }
                 let bits_per_block = if *presence_per_block == 0 { 8 } else { *presence_per_block as usize };
-                if *presence_per_block == 0 {
+                if *presence_per_block == 0 && *total_bits == 1 {
+                    // Single presence bit: write to LSB (bit 0) of current byte (e.g. I048/170 FX).
+                    let bit = bp_bytes.get(0).map(|&b| (b >> 7) & 1).unwrap_or(0);
+                    ctx.bit_write.cur |= bit;
+                    ctx.bit_write.next_bit = 8;
+                } else if *presence_per_block == 0 {
                     for bit_j in 0..*total_bits as usize {
                         let byte_idx = bit_j / 8;
                         let bit_in_byte = 7 - (bit_j % 8);
