@@ -1,13 +1,83 @@
 //! Zero-copy walk over binary data using the message structure.
 //!
-//! No decode/encode: walk structure to get extent, validate constraints (minimal reads),
-//! zero padding/reserved in place, and remove messages by shifting bytes + updating length/count.
+//! This module provides **structure-only** traversal of binary payloads: it advances a byte
+//! position by following the protocol’s message/struct layout without allocating decoded
+//! values. Use it when you need extent (byte length), validation (constraints), or in-place
+//! edits (zero padding, remove message) without full decode/encode.
+//!
+//! ## Design
+//!
+//! - **No decode:** The walker does not build [`Value`](crate::value::Value) trees. It only
+//!   reads the minimum bytes required to skip fields (e.g. length/count, presence bits) and
+//!   to validate constrained fields.
+//! - **Zero-copy:** Data is never copied for decoding; the walker holds a slice and a `pos`.
+//! - **Same layout as codec:** Walk follows the same DSL types (structs, optionals, lists,
+//!   bitmap presence, etc.) as the main [codec](crate::codec), so extent and validation
+//!   match what decode would consume.
+//!
+//! ## When to use walk vs codec
+//!
+//! | Use case | Prefer |
+//! |----------|--------|
+//! | Get byte length of one message | [`message_extent`] |
+//! | Check constraints without decoding | [`validate_message_in_place`] |
+//! | Zero padding/reserved in a buffer | [`zero_padding_reserved_in_place`] |
+//! | Remove a message and shift bytes | [`remove_message_in_place`] + [`write_u32_in_place`] |
+//! | Full decode for inspection/display | [codec](crate::codec) |
+//!
+//! ## Presence and context
+//!
+//! Optional fields are driven by **presence** state: either a fixed bitmap
+//! ([`presence_bits`](crate::ast::TypeSpec::PresenceBits)), or a
+//! [bitmap_presence](crate::ast::TypeSpec::BitmapPresence) (FSPEC-style). The walker reads
+//! presence bits/bytes when it hits a presence field, then uses that state for subsequent
+//! `optional<T>` fields. Numeric values (e.g. from `length_of` / `count_of`) and the current
+//! presence state are kept internally for conditional and repeated fields.
+//!
+//! ## Public API summary
+//!
+//! - **Extent:** [`message_extent`] — returns number of bytes one message occupies.
+//! - **Validation:** [`validate_message_in_place`] — checks constraints in place.
+//! - **In-place edits:** [`zero_padding_reserved_in_place`], [`remove_message_in_place`],
+//!   [`write_u32_in_place`].
+//! - **Low-level:** [`BinaryWalker`] / [`BinaryWalkerMut`] for custom loops (e.g. skip
+//!   message, then [`BinaryWalker::position`]).
+//!
+//! ## Performance and profiling
+//!
+//! Walk is designed to be fast (no allocation, minimal reads). On typical ASTERIX-style
+//! payloads (many optionals and nested structs), measured hotspots are:
+//!
+//! - **Optional** — reading presence and conditionally skipping the optional’s inner type.
+//! - **StructRef** — resolving the struct and recursing over its fields.
+//! - **RepList** — reading the repetition count and looping over elements.
+//!
+//! Enable the **`walk_profile`** feature and use [`reset_walk_profile`] / [`get_walk_profile`]
+//! to get a per–type-spec breakdown (label → nanoseconds). Run the `walk_pcap` benchmark
+//! with `--features walk_profile` to print a hotspot summary after the run.
+//!
+//! ## Example
+//!
+//! ```ignore
+//! use aiprotodsl::{message_extent, ResolvedProtocol, WalkEndianness};
+//!
+//! let resolved: ResolvedProtocol = /* ... */;
+//! let body: &[u8] = /* record bytes */;
+//! let n = message_extent(body, 0, &resolved, WalkEndianness::Big, "Cat048Record")?;
+//! // n = number of bytes consumed by one Cat048Record
+//! ```
 
 use crate::ast::*;
 use crate::codec::CodecError;
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use std::collections::HashMap;
 
+#[cfg(feature = "walk_profile")]
+use std::cell::RefCell;
+#[cfg(feature = "walk_profile")]
+use std::time::Instant;
+
+/// Byte order for multi-byte fields (e.g. u16, u32, length_of, count_of).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Endianness {
     Big,
@@ -31,7 +101,12 @@ struct WalkContext {
     presence: WalkPresence,
 }
 
-/// Read-only walker: skip fields/messages and validate without allocating decoded values.
+/// Read-only walker: advances over binary data by following the message/struct layout.
+///
+/// Use [`BinaryWalker::skip_message`] to consume one message and get the byte count, or
+/// [`BinaryWalker::validate_message`] to check constraints. Position is tracked in
+/// [`BinaryWalker::position`]; [`BinaryWalker::remaining`] gives the slice from the
+/// current position to the end. No decoded values are allocated.
 pub struct BinaryWalker<'a> {
     data: &'a [u8],
     pos: usize,
@@ -40,7 +115,11 @@ pub struct BinaryWalker<'a> {
     ctx: WalkContext,
 }
 
-/// Mutable walker: same as BinaryWalker plus zero padding/reserved in place.
+/// Mutable walker: same as [`BinaryWalker`] but operates on `&mut [u8]`.
+///
+/// Used for in-place edits: [`zero_padding_reserved_message`](BinaryWalkerMut::zero_padding_reserved_message)
+/// zeros all `padding` and `reserved` fields in one message. Skip/validate behaviour matches
+/// [`BinaryWalker`].
 pub struct BinaryWalkerMut<'a> {
     data: &'a mut [u8],
     pos: usize,
@@ -235,9 +314,10 @@ impl<'a> BinaryWalker<'a> {
     }
 
     /// Validate current message in place (read only constrained fields, check ranges). No allocation.
+    /// Fields whose constraint saturates the type range (precomputed in resolved) are skipped without range check.
     pub fn validate_message(&mut self, message_name: &str) -> Result<(), CodecError> {
         let msg = self.resolved.get_message(message_name).ok_or_else(|| CodecError::UnknownStruct(message_name.to_string()))?;
-        self.validate_and_skip_message_fields(msg.fields.as_slice())?;
+        self.validate_and_skip_message_fields(message_name, msg.fields.as_slice())?;
         Ok(())
     }
 
@@ -255,7 +335,7 @@ impl<'a> BinaryWalker<'a> {
         Ok(())
     }
 
-    fn validate_and_skip_message_fields(&mut self, fields: &[MessageField]) -> Result<(), CodecError> {
+    fn validate_and_skip_message_fields(&mut self, message_name: &str, fields: &[MessageField]) -> Result<(), CodecError> {
         for f in fields {
             if let Some(ref cond) = f.condition {
                 let cond_val = self.ctx.get(cond.field.as_str()).map(|u| u as i64);
@@ -264,10 +344,11 @@ impl<'a> BinaryWalker<'a> {
                     continue;
                 }
             }
-            if f.constraint.is_some() {
-                self.validate_field_and_skip(f)?;
-            } else {
+            let saturating = self.resolved.saturating_range_fields.contains(&(message_name.to_string(), f.name.clone()));
+            if saturating || f.constraint.is_none() {
                 self.skip_type_spec(&f.type_spec, Some(&f.name))?;
+            } else {
+                self.validate_field_and_skip(f)?;
             }
         }
         Ok(())
@@ -287,15 +368,27 @@ impl<'a> BinaryWalker<'a> {
     fn skip_type_spec(&mut self, spec: &TypeSpec, field_name: Option<&str>) -> Result<(), CodecError> {
         match spec {
             TypeSpec::Base(bt) => {
+                #[cfg(feature = "walk_profile")]
+                let _g = ProfileGuard::new("Base");
                 let n = base_type_size(bt);
                 if self.pos + n > self.data.len() {
                     return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
                 }
                 self.pos += n;
             }
-            TypeSpec::Padding(n) | TypeSpec::Reserved(n) => self.pos += *n as usize,
-            TypeSpec::Bitfield(n) | TypeSpec::SizedInt(_, n) => self.pos += ((*n + 7) / 8) as usize,
+            TypeSpec::Padding(n) | TypeSpec::Reserved(n) => {
+                #[cfg(feature = "walk_profile")]
+                let _g = ProfileGuard::new("PaddingReserved");
+                self.pos += *n as usize;
+            }
+            TypeSpec::Bitfield(n) | TypeSpec::SizedInt(_, n) => {
+                #[cfg(feature = "walk_profile")]
+                let _g = ProfileGuard::new("BitfieldSizedInt");
+                self.pos += ((*n + 7) / 8) as usize;
+            }
             TypeSpec::LengthOf(_) | TypeSpec::CountOf(_) => {
+                #[cfg(feature = "walk_profile")]
+                let _g = ProfileGuard::new("LengthOfCountOf");
                 if self.pos + 4 > self.data.len() {
                     return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
                 }
@@ -306,10 +399,14 @@ impl<'a> BinaryWalker<'a> {
                 self.pos += 4;
             }
             TypeSpec::PresenceBits(n) => {
+                #[cfg(feature = "walk_profile")]
+                let _g = ProfileGuard::new("PresenceBits");
                 let bitmap = read_bitmap_n(self.data, &mut self.pos, self.endianness, *n)?;
                 self.ctx.presence = WalkPresence::Bitmap(bitmap, 0);
             }
             TypeSpec::BitmapPresence { total_bits, presence_per_block, .. } => {
+                #[cfg(feature = "walk_profile")]
+                let _g = ProfileGuard::new("BitmapPresence");
                 let max_encoded_bits = if *presence_per_block == 0 { *total_bits } else { ((*total_bits + presence_per_block - 1) / presence_per_block) * (presence_per_block + 1) };
                 let max_bytes = ((max_encoded_bits + 7) / 8) as usize;
                 let mut bytes = Vec::new();
@@ -336,6 +433,8 @@ impl<'a> BinaryWalker<'a> {
                 self.ctx.presence = WalkPresence::BitmapPresence(bytes, 0, *presence_per_block);
             }
             TypeSpec::PaddingBits(n) => {
+                #[cfg(feature = "walk_profile")]
+                let _g = ProfileGuard::new("PaddingBits");
                 let byte_len = ((*n + 7) / 8) as usize;
                 if self.pos + byte_len > self.data.len() {
                     return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
@@ -343,10 +442,14 @@ impl<'a> BinaryWalker<'a> {
                 self.pos += byte_len;
             }
             TypeSpec::StructRef(name) => {
+                #[cfg(feature = "walk_profile")]
+                let _g = ProfileGuard::new("StructRef");
                 let s = self.resolved.get_struct(name).ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
                 self.skip_struct_fields(s.fields.as_slice())?;
             }
             TypeSpec::Array(elem, len) => {
+                #[cfg(feature = "walk_profile")]
+                let _g = ProfileGuard::new("Array");
                 let n = match len {
                     ArrayLen::Constant(k) => *k,
                     ArrayLen::FieldRef(field) => self.ctx.get(field).ok_or_else(|| CodecError::UnknownField(field.clone()))?,
@@ -356,6 +459,8 @@ impl<'a> BinaryWalker<'a> {
                 }
             }
             TypeSpec::List(elem) => {
+                #[cfg(feature = "walk_profile")]
+                let _g = ProfileGuard::new("List");
                 if self.pos + 4 > self.data.len() {
                     return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
                 }
@@ -366,6 +471,8 @@ impl<'a> BinaryWalker<'a> {
                 }
             }
             TypeSpec::RepList(elem) => {
+                #[cfg(feature = "walk_profile")]
+                let _g = ProfileGuard::new("RepList");
                 if self.pos + 1 > self.data.len() {
                     return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
                 }
@@ -376,6 +483,8 @@ impl<'a> BinaryWalker<'a> {
                 }
             }
             TypeSpec::OctetsFx => {
+                #[cfg(feature = "walk_profile")]
+                let _g = ProfileGuard::new("OctetsFx");
                 while self.pos < self.data.len() {
                     let b = self.data[self.pos];
                     self.pos += 1;
@@ -385,6 +494,8 @@ impl<'a> BinaryWalker<'a> {
                 }
             }
             TypeSpec::Optional(elem) => {
+                #[cfg(feature = "walk_profile")]
+                let _g = ProfileGuard::new("Optional");
                 let present = match &mut self.ctx.presence {
                     WalkPresence::Bitmap(bitmap, i) => {
                         let bit = (*bitmap >> *i) & 1;
@@ -612,9 +723,19 @@ impl<'a> BinaryWalkerMut<'a> {
                 }
                 self.pos += n;
             }
-            TypeSpec::Padding(n) | TypeSpec::Reserved(n) => self.pos += *n as usize,
-            TypeSpec::Bitfield(n) | TypeSpec::SizedInt(_, n) => self.pos += ((*n + 7) / 8) as usize,
+            TypeSpec::Padding(n) | TypeSpec::Reserved(n) => {
+                #[cfg(feature = "walk_profile")]
+                let _g = ProfileGuard::new("PaddingReserved");
+                self.pos += *n as usize;
+            }
+            TypeSpec::Bitfield(n) | TypeSpec::SizedInt(_, n) => {
+                #[cfg(feature = "walk_profile")]
+                let _g = ProfileGuard::new("BitfieldSizedInt");
+                self.pos += ((*n + 7) / 8) as usize;
+            }
             TypeSpec::LengthOf(_) | TypeSpec::CountOf(_) => {
+                #[cfg(feature = "walk_profile")]
+                let _g = ProfileGuard::new("LengthOfCountOf");
                 if self.pos + 4 > self.data.len() {
                     return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
                 }
@@ -625,10 +746,14 @@ impl<'a> BinaryWalkerMut<'a> {
                 self.pos += 4;
             }
             TypeSpec::PresenceBits(n) => {
+                #[cfg(feature = "walk_profile")]
+                let _g = ProfileGuard::new("PresenceBits");
                 let bitmap = read_bitmap_n(self.data, &mut self.pos, self.endianness, *n)?;
                 self.ctx.presence = WalkPresence::Bitmap(bitmap, 0);
             }
             TypeSpec::BitmapPresence { total_bits, presence_per_block, .. } => {
+                #[cfg(feature = "walk_profile")]
+                let _g = ProfileGuard::new("BitmapPresence");
                 let max_encoded_bits = if *presence_per_block == 0 { *total_bits } else { ((*total_bits + presence_per_block - 1) / presence_per_block) * (presence_per_block + 1) };
                 let max_bytes = ((max_encoded_bits + 7) / 8) as usize;
                 let mut bytes = Vec::new();
@@ -754,7 +879,12 @@ impl<'a> BinaryWalkerMut<'a> {
 
 // --- Standalone in-place operations (no decode/encode) ---
 
-/// Return the byte extent of one message by walking the structure. No allocation.
+/// Returns the byte extent of one message by walking the structure.
+///
+/// Advances from `start` through the whole message (including all optionals present
+/// according to presence bits) and returns the number of bytes consumed. No allocation.
+/// Use this to know how long one record is before decoding or to split a frame into
+/// messages.
 pub fn message_extent(
     data: &[u8],
     start: usize,
@@ -766,7 +896,11 @@ pub fn message_extent(
     w.skip_message(message_name)
 }
 
-/// Validate a message in place (read only constrained fields). No allocation.
+/// Validates a message in place by reading only constrained fields and checking ranges/enums.
+///
+/// Walks the message from `start` and verifies every field that has a `[min..max]` or
+/// `[in(...)]` constraint. No allocation; fails with [`CodecError`](crate::codec::CodecError)
+/// if any constraint is violated or the buffer is too short.
 pub fn validate_message_in_place(
     data: &[u8],
     start: usize,
@@ -778,7 +912,10 @@ pub fn validate_message_in_place(
     w.validate_message(message_name)
 }
 
-/// Zero all padding and reserved fields in the given message range, in place. No allocation.
+/// Zeros all `padding` and `reserved` fields in the given message range, in place.
+///
+/// Walks the message from `start` and sets every padding/reserved byte to 0. Useful before
+/// re-encoding or to sanitise a buffer. No allocation.
 pub fn zero_padding_reserved_in_place(
     data: &mut [u8],
     start: usize,
@@ -790,9 +927,12 @@ pub fn zero_padding_reserved_in_place(
     w.zero_padding_reserved_message(message_name)
 }
 
-/// Remove a message from the frame by shifting bytes. Caller must update length/count fields separately.
-/// `buffer[start..start+len]` is the message to remove; bytes after `start+len` are shifted to `start`.
-/// Returns the new length of the buffer (original_len - len).
+/// Removes a message from the frame by shifting bytes.
+///
+/// The range `buffer[start..start+len]` is the message to remove. Bytes after
+/// `start+len` are shifted left to `start`. Returns the new length of the buffer
+/// (`original_len - len`). The caller is responsible for updating any length/count
+/// fields (e.g. with [`write_u32_in_place`]) so the frame remains valid.
 pub fn remove_message_in_place(buffer: &mut [u8], start: usize, len: usize) -> usize {
     let end = start + len;
     if end > buffer.len() {
@@ -805,7 +945,10 @@ pub fn remove_message_in_place(buffer: &mut [u8], start: usize, len: usize) -> u
     buffer.len() - len
 }
 
-/// Write a u32 at the given offset (4 bytes) with the given endianness. Use to update length/count after removing a message.
+/// Writes a `u32` at the given offset (4 bytes) with the given endianness.
+///
+/// Typical use: after [`remove_message_in_place`], update a length or count field
+/// in the frame header so the remaining buffer describes the new size.
 pub fn write_u32_in_place(buffer: &mut [u8], offset: usize, value: u32, endianness: Endianness) -> Result<(), CodecError> {
     if offset + 4 > buffer.len() {
         return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
@@ -817,7 +960,80 @@ pub fn write_u32_in_place(buffer: &mut [u8], offset: usize, value: u32, endianne
     Ok(())
 }
 
-/// Convert codec::Endianness to walk::Endianness so walk can be used with Codec's resolved + endianness.
+// --- Walk profiling (feature "walk_profile") ---
+//
+// When the crate is built with `walk_profile`, each skip_type_spec branch records its
+// cumulative time. Use reset_walk_profile() before a run and get_walk_profile() after
+// to get a label -> nanoseconds map. Labels are the TypeSpec variant names (e.g.
+// "Optional", "StructRef", "RepList"). Run the walk_pcap benchmark with
+// `--features walk_profile` to print a hotspot summary to stderr.
+
+#[cfg(feature = "walk_profile")]
+#[derive(Default)]
+struct WalkProfileStats {
+    ns_per_label: HashMap<String, u64>,
+}
+
+#[cfg(feature = "walk_profile")]
+thread_local!(static WALK_PROFILE: RefCell<WalkProfileStats> = RefCell::new(WalkProfileStats::default()));
+
+#[cfg(feature = "walk_profile")]
+fn record_walk_profile(label: &'static str, d: std::time::Duration) {
+    WALK_PROFILE.with(|p| {
+        let mut st = p.borrow_mut();
+        *st.ns_per_label.entry(label.to_string()).or_insert(0) += d.as_nanos() as u64;
+    });
+}
+
+/// Resets accumulated walk profile stats.
+///
+/// Call before a walk run when the `walk_profile` feature is enabled; then call
+/// [`get_walk_profile`] after the run to get the per–type-spec timing breakdown.
+#[cfg(feature = "walk_profile")]
+pub fn reset_walk_profile() {
+    WALK_PROFILE.with(|p| *p.borrow_mut() = WalkProfileStats::default());
+}
+
+/// Returns accumulated walk profile: label → total nanoseconds.
+///
+/// Labels correspond to TypeSpec variants (e.g. `"Optional"`, `"StructRef"`, `"RepList"`).
+/// Empty when the `walk_profile` feature is not enabled.
+#[cfg(feature = "walk_profile")]
+pub fn get_walk_profile() -> HashMap<String, u64> {
+    WALK_PROFILE.with(|p| p.borrow().ns_per_label.clone())
+}
+
+#[cfg(feature = "walk_profile")]
+struct ProfileGuard {
+    label: &'static str,
+    start: Instant,
+}
+
+#[cfg(feature = "walk_profile")]
+impl ProfileGuard {
+    fn new(label: &'static str) -> Self {
+        Self { label, start: Instant::now() }
+    }
+}
+
+#[cfg(feature = "walk_profile")]
+impl Drop for ProfileGuard {
+    fn drop(&mut self) {
+        record_walk_profile(self.label, self.start.elapsed());
+    }
+}
+
+#[cfg(not(feature = "walk_profile"))]
+/// No-op when the `walk_profile` feature is not enabled.
+pub fn reset_walk_profile() {}
+
+#[cfg(not(feature = "walk_profile"))]
+/// Returns an empty map when the `walk_profile` feature is not enabled.
+pub fn get_walk_profile() -> HashMap<String, u64> {
+    HashMap::new()
+}
+
+/// Converts codec endianness to walk endianness for use with [`message_extent`] and related APIs.
 impl From<crate::codec::Endianness> for Endianness {
     fn from(e: crate::codec::Endianness) -> Self {
         match e {

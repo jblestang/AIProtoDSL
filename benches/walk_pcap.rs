@@ -2,7 +2,7 @@
 //! record payloads in cat_034_048.pcap. Walk uses message_extent only (no decode);
 //! decode uses Codec::decode_message_with_extent in a loop; decode+encode round-trips each record.
 
-use aiprotodsl::{message_extent, parse, Codec, Endianness, ResolvedProtocol};
+use aiprotodsl::{message_extent, parse, validate_message_in_place, Codec, Endianness, ResolvedProtocol};
 #[cfg(feature = "walk_profile")]
 use aiprotodsl::{get_walk_profile, reset_walk_profile};
 #[cfg(feature = "codec_decode_profile")]
@@ -93,6 +93,28 @@ fn walk_block_body(
     while pos < body.len() {
         match message_extent(body, pos, resolved, endianness, msg_name) {
             Ok(consumed) => {
+                pos += consumed;
+                records += 1;
+            }
+            Err(_) => break,
+        }
+    }
+    records
+}
+
+/// Walk then validate each record (extent + validate_message_in_place). Benefits from saturating-range skip.
+fn walk_validate_block_body(
+    body: &[u8],
+    msg_name: &str,
+    resolved: &ResolvedProtocol,
+    endianness: aiprotodsl::WalkEndianness,
+) -> usize {
+    let mut pos = 0usize;
+    let mut records = 0usize;
+    while pos < body.len() {
+        match message_extent(body, pos, resolved, endianness, msg_name) {
+            Ok(consumed) => {
+                let _ = validate_message_in_place(body, pos, resolved, endianness, msg_name);
                 pos += consumed;
                 records += 1;
             }
@@ -274,7 +296,22 @@ fn bench_walk_pcap(c: &mut Criterion) {
         });
     });
 
-    // Sustainable data rate: timed runs for walk, decode, decode+encode
+    c.bench_function("walk_validate_cat_034_048_pcap", |b| {
+        b.iter(|| {
+            let mut records = 0usize;
+            for (msg_name, body) in &blocks {
+                records += walk_validate_block_body(
+                    black_box(body),
+                    black_box(msg_name),
+                    &resolved,
+                    endianness,
+                );
+            }
+            black_box(records)
+        });
+    });
+
+    // Sustainable data rate: timed runs for walk, walk+validate, decode, decode+encode
     const ITERS: u32 = 10_000;
     let latency_budget_ms = 1.0;
     let us_per_budget = latency_budget_ms * 1000.0;
@@ -289,6 +326,18 @@ fn bench_walk_pcap(c: &mut Criterion) {
     let walk_us = walk_ns as f64 / 1000.0;
     let walk_records_per_sec = (total_records as f64) / (walk_ns as f64 / 1e9);
     let walk_mb_per_sec = (total_body_bytes as f64) / (walk_ns as f64 / 1e9) / 1e6;
+
+    const WALK_VALIDATE_ITERS: u32 = 2_000;
+    let start = std::time::Instant::now();
+    for _ in 0..WALK_VALIDATE_ITERS {
+        for (msg_name, body) in &blocks {
+            walk_validate_block_body(body, msg_name, &resolved, endianness);
+        }
+    }
+    let walk_val_ns = start.elapsed().as_nanos() / (WALK_VALIDATE_ITERS as u128);
+    let walk_val_us = walk_val_ns as f64 / 1000.0;
+    let walk_val_records_per_sec = (total_records as f64) / (walk_val_ns as f64 / 1e9);
+    let walk_val_mb_per_sec = (total_body_bytes as f64) / (walk_val_ns as f64 / 1e9) / 1e6;
 
     let start = std::time::Instant::now();
     for _ in 0..ITERS {
@@ -323,6 +372,14 @@ fn bench_walk_pcap(c: &mut Criterion) {
         walk_mb_per_sec,
         us_per_budget / walk_us,
         us_per_budget / walk_us * (total_records as f64)
+    );
+    eprintln!(
+        "  walk+validate      | {:>8.2} | ~{:.2} M/s   | {:>6.2} | {:.1} pcaps, {:.0} rec",
+        walk_val_us,
+        walk_val_records_per_sec / 1e6,
+        walk_val_mb_per_sec,
+        us_per_budget / walk_val_us,
+        us_per_budget / walk_val_us * (total_records as f64)
     );
     eprintln!(
         "  decode             | {:>8.2} | ~{:.2} M/s   | {:>6.2} | {:.1} pcaps, {:.0} rec",

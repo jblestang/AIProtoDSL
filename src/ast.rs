@@ -1,6 +1,6 @@
 //! Abstract Syntax Tree for the Protocol Encoding DSL.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Root protocol definition: transport, payload (messages after transport), type definitions (abstract), enums, messages, structs (encoding).
 #[derive(Debug, Clone)]
@@ -210,12 +210,79 @@ pub enum Constraint {
     Enum(Vec<Literal>),
 }
 
+/// Returns the integer range (min, max) inclusive for types that have a fixed value range.
+/// Used to detect constraints that saturate the type (no need to validate at walk time).
+pub fn type_spec_integer_range(spec: &TypeSpec) -> Option<(i64, i64)> {
+    match spec {
+        TypeSpec::Base(bt) => match bt {
+            BaseType::U8 => Some((0, 255)),
+            BaseType::I8 => Some((-128, 127)),
+            BaseType::U16 => Some((0, 65535)),
+            BaseType::I16 => Some((-32768, 32767)),
+            BaseType::U32 => Some((0, i64::from(u32::MAX))),
+            BaseType::I32 => Some((i32::MIN as i64, i32::MAX as i64)),
+            BaseType::U64 => Some((0, i64::MAX)), // u64 range truncated to i64 for comparison
+            BaseType::I64 => Some((i64::MIN, i64::MAX)),
+            BaseType::Bool => Some((0, 1)),
+            BaseType::Float | BaseType::Double => None,
+        },
+        TypeSpec::Bitfield(n) => {
+            if *n > 63 {
+                None
+            } else {
+                let max = (1i64 << n) - 1;
+                Some((0, max))
+            }
+        }
+        TypeSpec::SizedInt(bt, n) => {
+            if *n > 63 {
+                None
+            } else if matches!(bt, BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64) {
+                let half = 1i64 << (n - 1);
+                Some((-half, half - 1))
+            } else {
+                let max = (1i64 << n) - 1;
+                Some((0, max))
+            }
+        }
+        _ => None,
+    }
+}
+
+/// True if the constraint exactly covers the type range (so validation can be skipped when walking).
+pub fn constraint_saturates_range(c: &Constraint, type_min: i64, type_max: i64) -> bool {
+    match c {
+        Constraint::Range(intervals) => {
+            if intervals.len() != 1 {
+                return false;
+            }
+            let (c_min, c_max) = intervals[0];
+            c_min == type_min && c_max == type_max
+        }
+        Constraint::Enum(_) => false,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Int(i64),
     Bool(bool),
     Hex(u64),
     String(String),
+}
+
+fn build_saturating_range_fields(messages: &[MessageSection]) -> HashSet<(String, String)> {
+    let mut out = HashSet::new();
+    for msg in messages {
+        for f in &msg.fields {
+            let Some(ref c) = f.constraint else { continue };
+            let Some((type_min, type_max)) = type_spec_integer_range(&f.type_spec) else { continue };
+            if constraint_saturates_range(c, type_min, type_max) {
+                out.insert((msg.name.clone(), f.name.clone()));
+            }
+        }
+    }
+    out
 }
 
 fn build_bitmap_presence_mappings_messages(messages: &[MessageSection]) -> Result<HashMap<String, BitmapPresenceMapping>, String> {
@@ -357,6 +424,8 @@ pub struct ResolvedProtocol {
     pub message_bitmap_presence: HashMap<String, BitmapPresenceMapping>,
     /// Struct name -> bitmap presence field and the optional fields it governs.
     pub struct_bitmap_presence: HashMap<String, BitmapPresenceMapping>,
+    /// (message_name, field_name) for fields whose constraint saturates the type range (walker skips range check).
+    pub saturating_range_fields: HashSet<(String, String)>,
 }
 
 impl ResolvedProtocol {
@@ -395,6 +464,7 @@ impl ResolvedProtocol {
         }
         let message_bitmap_presence = build_bitmap_presence_mappings_messages(&protocol.messages)?;
         let struct_bitmap_presence = build_bitmap_presence_mappings_structs(&protocol.structs)?;
+        let saturating_range_fields = build_saturating_range_fields(&protocol.messages);
         Ok(ResolvedProtocol {
             protocol,
             type_defs_by_name,
@@ -402,6 +472,7 @@ impl ResolvedProtocol {
             messages_by_name,
             message_bitmap_presence,
             struct_bitmap_presence,
+            saturating_range_fields,
         })
     }
 
