@@ -1,6 +1,6 @@
 //! Abstract Syntax Tree for the Protocol Encoding DSL.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Root protocol definition: transport, payload (messages after transport), type definitions (abstract), enums, messages, structs (encoding).
 #[derive(Debug, Clone)]
@@ -127,6 +127,8 @@ pub struct MessageField {
     pub condition: Option<Condition>,
     /// Resolution/unit per spec (e.g. "1/256 NM").
     pub quantum: Option<String>,
+    /// Set at resolve: true when constraint saturates the type range (skip range check during validation).
+    pub saturating: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -271,16 +273,20 @@ pub enum Literal {
     String(String),
 }
 
-fn build_saturating_range_fields(messages: &[MessageSection]) -> HashSet<(String, String)> {
-    let mut out = HashSet::new();
+/// Per-message vec of bool (one per field, same order): true = constraint saturates type range, skip range check.
+fn build_message_field_saturating(messages: &[MessageSection]) -> HashMap<String, Vec<bool>> {
+    let mut out = HashMap::new();
     for msg in messages {
-        for f in &msg.fields {
-            let Some(ref c) = f.constraint else { continue };
-            let Some((type_min, type_max)) = type_spec_integer_range(&f.type_spec) else { continue };
-            if constraint_saturates_range(c, type_min, type_max) {
-                out.insert((msg.name.clone(), f.name.clone()));
-            }
-        }
+        let v: Vec<bool> = msg
+            .fields
+            .iter()
+            .map(|f| {
+                let Some(ref c) = f.constraint else { return false };
+                let Some((type_min, type_max)) = type_spec_integer_range(&f.type_spec) else { return false };
+                constraint_saturates_range(c, type_min, type_max)
+            })
+            .collect();
+        out.insert(msg.name.clone(), v);
     }
     out
 }
@@ -424,8 +430,6 @@ pub struct ResolvedProtocol {
     pub message_bitmap_presence: HashMap<String, BitmapPresenceMapping>,
     /// Struct name -> bitmap presence field and the optional fields it governs.
     pub struct_bitmap_presence: HashMap<String, BitmapPresenceMapping>,
-    /// (message_name, field_name) for fields whose constraint saturates the type range (walker skips range check).
-    pub saturating_range_fields: HashSet<(String, String)>,
 }
 
 impl ResolvedProtocol {
@@ -464,7 +468,15 @@ impl ResolvedProtocol {
         }
         let message_bitmap_presence = build_bitmap_presence_mappings_messages(&protocol.messages)?;
         let struct_bitmap_presence = build_bitmap_presence_mappings_structs(&protocol.structs)?;
-        let saturating_range_fields = build_saturating_range_fields(&protocol.messages);
+        let mut protocol = protocol;
+        let saturating_map = build_message_field_saturating(&protocol.messages);
+        for msg in &mut protocol.messages {
+            if let Some(vec) = saturating_map.get(&msg.name) {
+                for (f, &s) in msg.fields.iter_mut().zip(vec.iter()) {
+                    f.saturating = s;
+                }
+            }
+        }
         Ok(ResolvedProtocol {
             protocol,
             type_defs_by_name,
@@ -472,7 +484,6 @@ impl ResolvedProtocol {
             messages_by_name,
             message_bitmap_presence,
             struct_bitmap_presence,
-            saturating_range_fields,
         })
     }
 

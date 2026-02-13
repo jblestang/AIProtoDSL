@@ -313,6 +313,7 @@ fn build_message_field(pair: pest::iterators::Pair<Rule>) -> Result<MessageField
         constraint,
         condition,
         quantum,
+        saturating: false,
     })
 }
 

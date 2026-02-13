@@ -56,7 +56,9 @@ pub use parser::parse;
 pub use value::Value;
 pub use lint::{lint, LintMessage, LintRule, Severity};
 pub use walk::{
-    message_extent, validate_message_in_place, zero_padding_reserved_in_place,
+    message_extent, validate_message_in_place,
+    validate_and_zero_message_in_place,
+    zero_padding_reserved_in_place,
     remove_message_in_place, write_u32_in_place,
     BinaryWalker, BinaryWalkerMut,
     Endianness as WalkEndianness,

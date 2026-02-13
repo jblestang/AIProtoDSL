@@ -1,8 +1,10 @@
 //! Benchmark: compare walk vs decode vs decode+encode for processing all ASTERIX
 //! record payloads in cat_034_048.pcap. Walk uses message_extent only (no decode);
-//! decode uses Codec::decode_message_with_extent in a loop; decode+encode round-trips each record.
+//! walk+validate uses extent then validate_message_in_place (saturation is on each MessageField at resolve);
+//! walk+validate+zero uses validate_and_zero_message_in_place (one walk per record; mutates buffer; bench clones blocks per iter).
+//! Decode and decode+encode round-trip.
 
-use aiprotodsl::{message_extent, parse, validate_message_in_place, Codec, Endianness, ResolvedProtocol};
+use aiprotodsl::{message_extent, parse, validate_message_in_place, validate_and_zero_message_in_place, Codec, Endianness, ResolvedProtocol};
 #[cfg(feature = "walk_profile")]
 use aiprotodsl::{get_walk_profile, reset_walk_profile};
 #[cfg(feature = "codec_decode_profile")]
@@ -102,7 +104,7 @@ fn walk_block_body(
     records
 }
 
-/// Walk then validate each record (extent + validate_message_in_place). Benefits from saturating-range skip.
+/// Walk then validate each record (extent + validate_message_in_place). Saturating flag is on each MessageField.
 fn walk_validate_block_body(
     body: &[u8],
     msg_name: &str,
@@ -115,6 +117,27 @@ fn walk_validate_block_body(
         match message_extent(body, pos, resolved, endianness, msg_name) {
             Ok(consumed) => {
                 let _ = validate_message_in_place(body, pos, resolved, endianness, msg_name);
+                pos += consumed;
+                records += 1;
+            }
+            Err(_) => break,
+        }
+    }
+    records
+}
+
+/// Walk, validate and zeroize padding/reserved in one pass per record (validate_and_zero_message_in_place). Mutates body.
+fn walk_validate_zero_block_body(
+    body: &mut [u8],
+    msg_name: &str,
+    resolved: &ResolvedProtocol,
+    endianness: aiprotodsl::WalkEndianness,
+) -> usize {
+    let mut pos = 0usize;
+    let mut records = 0usize;
+    while pos < body.len() {
+        match validate_and_zero_message_in_place(body, pos, resolved, endianness, msg_name) {
+            Ok(consumed) => {
                 pos += consumed;
                 records += 1;
             }
@@ -311,6 +334,20 @@ fn bench_walk_pcap(c: &mut Criterion) {
         });
     });
 
+    c.bench_function("walk_validate_zero_cat_034_048_pcap", |b| {
+        b.iter(|| {
+            let mut copies: Vec<(String, Vec<u8>)> = blocks
+                .iter()
+                .map(|(n, body)| (n.clone(), body.to_vec()))
+                .collect();
+            let mut records = 0usize;
+            for (msg_name, body) in &mut copies {
+                records += walk_validate_zero_block_body(body, msg_name, &resolved, endianness);
+            }
+            black_box(records)
+        });
+    });
+
     // Sustainable data rate: timed runs for walk, walk+validate, decode, decode+encode
     const ITERS: u32 = 10_000;
     let latency_budget_ms = 1.0;
@@ -338,6 +375,22 @@ fn bench_walk_pcap(c: &mut Criterion) {
     let walk_val_us = walk_val_ns as f64 / 1000.0;
     let walk_val_records_per_sec = (total_records as f64) / (walk_val_ns as f64 / 1e9);
     let walk_val_mb_per_sec = (total_body_bytes as f64) / (walk_val_ns as f64 / 1e9) / 1e6;
+
+    const WALK_VALIDATE_ZERO_ITERS: u32 = 1_000;
+    let start = std::time::Instant::now();
+    for _ in 0..WALK_VALIDATE_ZERO_ITERS {
+        let mut copies: Vec<(String, Vec<u8>)> = blocks
+            .iter()
+            .map(|(n, body)| (n.clone(), body.to_vec()))
+            .collect();
+        for (msg_name, body) in &mut copies {
+            walk_validate_zero_block_body(body, msg_name, &resolved, endianness);
+        }
+    }
+    let walk_val_zero_ns = start.elapsed().as_nanos() / (WALK_VALIDATE_ZERO_ITERS as u128);
+    let walk_val_zero_us = walk_val_zero_ns as f64 / 1000.0;
+    let walk_val_zero_records_per_sec = (total_records as f64) / (walk_val_zero_ns as f64 / 1e9);
+    let walk_val_zero_mb_per_sec = (total_body_bytes as f64) / (walk_val_zero_ns as f64 / 1e9) / 1e6;
 
     let start = std::time::Instant::now();
     for _ in 0..ITERS {
@@ -382,6 +435,14 @@ fn bench_walk_pcap(c: &mut Criterion) {
         us_per_budget / walk_val_us * (total_records as f64)
     );
     eprintln!(
+        "  walk+validate+zero | {:>8.2} | ~{:.2} M/s   | {:>6.2} | {:.1} pcaps, {:.0} rec",
+        walk_val_zero_us,
+        walk_val_zero_records_per_sec / 1e6,
+        walk_val_zero_mb_per_sec,
+        us_per_budget / walk_val_zero_us,
+        us_per_budget / walk_val_zero_us * (total_records as f64)
+    );
+    eprintln!(
         "  decode             | {:>8.2} | ~{:.2} M/s   | {:>6.2} | {:.1} pcaps, {:.0} rec",
         decode_us,
         decode_records_per_sec / 1e6,
@@ -399,7 +460,7 @@ fn bench_walk_pcap(c: &mut Criterion) {
     );
     eprintln!("---");
 
-    // With walk_profile feature: one run and print hotspot breakdown
+    // With walk_profile feature: walk-only and walk+validate hotspot breakdown
     #[cfg(feature = "walk_profile")]
     {
         reset_walk_profile();
@@ -408,7 +469,23 @@ fn bench_walk_pcap(c: &mut Criterion) {
         }
         let profile = get_walk_profile();
         let total_ns: u64 = profile.values().sum();
-        eprintln!("walk_pcap hotspot (one full pcap walk, walk_profile feature):");
+        eprintln!("walk_pcap hotspot (extent only, walk_profile feature):");
+        let mut by_label: Vec<_> = profile.into_iter().collect();
+        by_label.sort_by(|a, b| b.1.cmp(&a.1));
+        for (label, ns) in &by_label {
+            let pct = if total_ns > 0 { *ns as f64 / total_ns as f64 * 100.0 } else { 0.0 };
+            eprintln!("  {:20} {:>12} ns  {:5.1}%", label, ns, pct);
+        }
+        eprintln!("  {:20} {:>12} ns  100.0%", "TOTAL", total_ns);
+
+        reset_walk_profile();
+        for (msg_name, body) in &blocks {
+            walk_validate_block_body(body, msg_name, &resolved, endianness);
+        }
+        let profile = get_walk_profile();
+        let total_ns: u64 = profile.values().sum();
+        eprintln!();
+        eprintln!("walk_validate_pcap hotspot (extent + validate, walk_profile feature):");
         let mut by_label: Vec<_> = profile.into_iter().collect();
         by_label.sort_by(|a, b| b.1.cmp(&a.1));
         for (label, ns) in &by_label {

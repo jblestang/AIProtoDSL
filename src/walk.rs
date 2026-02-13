@@ -92,6 +92,8 @@ enum WalkPresence {
     Bitmap(u64, usize),
     /// presence_per_block: 0 = consecutive presence bits (8 per byte); k>0 = k presence + 1 FX per block.
     BitmapPresence(Vec<u8>, usize, u32),
+    /// Consecutive bits (8 per byte): hot path for ASTERIX FSPEC; no division/modulo per optional.
+    BitmapPresenceConsecutive(Vec<u8>, usize, u8),
 }
 
 /// Context for walk: stores numeric field values and optional presence state.
@@ -257,6 +259,7 @@ fn read_bytes_to_u64(data: &[u8], pos: &mut usize, len: usize, endianness: Endia
     Ok(v)
 }
 
+/// Slow path (validation): range check or enum check. Used from validate_field_and_skip.
 fn validate_constraint_raw(value_i64: i64, c: &Constraint) -> Result<(), CodecError> {
     match c {
         Constraint::Range(intervals) => {
@@ -314,10 +317,10 @@ impl<'a> BinaryWalker<'a> {
     }
 
     /// Validate current message in place (read only constrained fields, check ranges). No allocation.
-    /// Fields whose constraint saturates the type range (precomputed in resolved) are skipped without range check.
+    /// Fields whose constraint saturates the type range (flag set on each [`MessageField`](crate::ast::MessageField) at resolve) are skipped without range check.
     pub fn validate_message(&mut self, message_name: &str) -> Result<(), CodecError> {
         let msg = self.resolved.get_message(message_name).ok_or_else(|| CodecError::UnknownStruct(message_name.to_string()))?;
-        self.validate_and_skip_message_fields(message_name, msg.fields.as_slice())?;
+        self.validate_and_skip_message_fields(msg.fields.as_slice())?;
         Ok(())
     }
 
@@ -335,8 +338,10 @@ impl<'a> BinaryWalker<'a> {
         Ok(())
     }
 
-    fn validate_and_skip_message_fields(&mut self, message_name: &str, fields: &[MessageField]) -> Result<(), CodecError> {
-        for f in fields {
+    /// Validation: for each field we skip (saturating or no constraint) or run range check.
+    /// Saturating flag is set on each [`MessageField`](crate::ast::MessageField) at resolve.
+    fn validate_and_skip_message_fields(&mut self, fields: &[MessageField]) -> Result<(), CodecError> {
+        for f in fields.iter() {
             if let Some(ref cond) = f.condition {
                 let cond_val = self.ctx.get(cond.field.as_str()).map(|u| u as i64);
                 let expected = cond.value.as_i64();
@@ -344,8 +349,7 @@ impl<'a> BinaryWalker<'a> {
                     continue;
                 }
             }
-            let saturating = self.resolved.saturating_range_fields.contains(&(message_name.to_string(), f.name.clone()));
-            if saturating || f.constraint.is_none() {
+            if f.saturating || f.constraint.is_none() {
                 self.skip_type_spec(&f.type_spec, Some(&f.name))?;
             } else {
                 self.validate_field_and_skip(f)?;
@@ -354,7 +358,11 @@ impl<'a> BinaryWalker<'a> {
         Ok(())
     }
 
+    /// Range-check slow path: read field value from buffer then validate interval/enum.
+    /// Called only for message-level fields that have a constraint and are not saturating (see [`MessageField::saturating`](crate::ast::MessageField)).
     fn validate_field_and_skip(&mut self, f: &MessageField) -> Result<(), CodecError> {
+        #[cfg(feature = "walk_profile")]
+        let _g = ProfileGuard::new("ValidateField");
         let value_i64 = read_i64_slice(self.data, &mut self.pos, &f.type_spec, self.endianness)?;
         if let Some(ref c) = f.constraint {
             validate_constraint_raw(value_i64, c)?;
@@ -365,6 +373,9 @@ impl<'a> BinaryWalker<'a> {
         Ok(())
     }
 
+    /// **Slow path** (run with `--features walk_profile` and see bench walk_validate_pcap hotspot):
+    /// **Optional** (~48%), **StructRef** (~34%), **RepList** (~10%); then BitfieldSizedInt, Base.
+    /// For walk+validate, **ValidateField** (range/enum check) is a small fraction when most fields are saturating.
     fn skip_type_spec(&mut self, spec: &TypeSpec, field_name: Option<&str>) -> Result<(), CodecError> {
         match spec {
             TypeSpec::Base(bt) => {
@@ -430,7 +441,11 @@ impl<'a> BinaryWalker<'a> {
                         }
                     }
                 }
-                self.ctx.presence = WalkPresence::BitmapPresence(bytes, 0, *presence_per_block);
+                self.ctx.presence = if *presence_per_block == 0 {
+                    WalkPresence::BitmapPresenceConsecutive(bytes, 0, 0)
+                } else {
+                    WalkPresence::BitmapPresence(bytes, 0, *presence_per_block)
+                };
             }
             TypeSpec::PaddingBits(n) => {
                 #[cfg(feature = "walk_profile")]
@@ -502,8 +517,18 @@ impl<'a> BinaryWalker<'a> {
                         *i += 1;
                         bit != 0
                     }
+                    WalkPresence::BitmapPresenceConsecutive(bytes, byte_idx, bit_offset) => {
+                        let present = *byte_idx < bytes.len() && ((bytes[*byte_idx] >> (7 - *bit_offset)) & 1) != 0;
+                        if *bit_offset == 7 {
+                            *byte_idx += 1;
+                            *bit_offset = 0;
+                        } else {
+                            *bit_offset += 1;
+                        }
+                        present
+                    }
                     WalkPresence::BitmapPresence(bytes, i, presence_per_block) => {
-                        let bits_per_block = if *presence_per_block == 0 { 8 } else { *presence_per_block as usize };
+                        let bits_per_block = *presence_per_block as usize;
                         let byte_idx = *i / bits_per_block;
                         let bit_idx = *i % bits_per_block;
                         *i += 1;
@@ -552,6 +577,43 @@ impl<'a> BinaryWalkerMut<'a> {
     pub fn zero_padding_reserved_message(&mut self, message_name: &str) -> Result<(), CodecError> {
         let msg = self.resolved.get_message(message_name).ok_or_else(|| CodecError::UnknownStruct(message_name.to_string()))?;
         self.zero_padding_reserved_message_fields(msg.fields.as_slice())?;
+        Ok(())
+    }
+
+    /// One-pass validate and zero: for each field, validate constrained non-saturating fields and zero padding/reserved; returns bytes consumed.
+    pub fn validate_and_zero_message(&mut self, message_name: &str) -> Result<usize, CodecError> {
+        let start = self.pos;
+        let msg = self.resolved.get_message(message_name).ok_or_else(|| CodecError::UnknownStruct(message_name.to_string()))?;
+        self.validate_and_zero_message_fields(msg.fields.as_slice())?;
+        Ok(self.pos - start)
+    }
+
+    fn validate_and_zero_message_fields(&mut self, fields: &[MessageField]) -> Result<(), CodecError> {
+        for f in fields.iter() {
+            if let Some(ref cond) = f.condition {
+                let cond_val = self.ctx.get(cond.field.as_str()).map(|u| u as i64);
+                let expected = cond.value.as_i64();
+                if cond_val != expected {
+                    continue;
+                }
+            }
+            if f.saturating || f.constraint.is_none() {
+                self.zero_or_skip_type_spec(&f.type_spec, Some(&f.name))?;
+            } else {
+                self.validate_field_and_skip(f)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_field_and_skip(&mut self, f: &MessageField) -> Result<(), CodecError> {
+        let value_i64 = read_i64_slice(self.data, &mut self.pos, &f.type_spec, self.endianness)?;
+        if let Some(ref c) = f.constraint {
+            validate_constraint_raw(value_i64, c)?;
+        }
+        if matches!(f.type_spec, TypeSpec::LengthOf(_) | TypeSpec::CountOf(_)) {
+            self.ctx.set(f.name.clone(), value_i64 as u64);
+        }
         Ok(())
     }
 
@@ -628,7 +690,11 @@ impl<'a> BinaryWalkerMut<'a> {
                         }
                     }
                 }
-                self.ctx.presence = WalkPresence::BitmapPresence(bytes, 0, *presence_per_block);
+                self.ctx.presence = if *presence_per_block == 0 {
+                    WalkPresence::BitmapPresenceConsecutive(bytes, 0, 0)
+                } else {
+                    WalkPresence::BitmapPresence(bytes, 0, *presence_per_block)
+                };
             }
             TypeSpec::PaddingBits(n) => {
                 let byte_len = ((*n + 7) / 8) as usize;
@@ -696,8 +762,18 @@ impl<'a> BinaryWalkerMut<'a> {
                         *i += 1;
                         bit != 0
                     }
+                    WalkPresence::BitmapPresenceConsecutive(bytes, byte_idx, bit_offset) => {
+                        let present = *byte_idx < bytes.len() && ((bytes[*byte_idx] >> (7 - *bit_offset)) & 1) != 0;
+                        if *bit_offset == 7 {
+                            *byte_idx += 1;
+                            *bit_offset = 0;
+                        } else {
+                            *bit_offset += 1;
+                        }
+                        present
+                    }
                     WalkPresence::BitmapPresence(bytes, i, presence_per_block) => {
-                        let bits_per_block = if *presence_per_block == 0 { 8 } else { *presence_per_block as usize };
+                        let bits_per_block = *presence_per_block as usize;
                         let byte_idx = *i / bits_per_block;
                         let bit_idx = *i % bits_per_block;
                         *i += 1;
@@ -777,7 +853,11 @@ impl<'a> BinaryWalkerMut<'a> {
                         }
                     }
                 }
-                self.ctx.presence = WalkPresence::BitmapPresence(bytes, 0, *presence_per_block);
+                self.ctx.presence = if *presence_per_block == 0 {
+                    WalkPresence::BitmapPresenceConsecutive(bytes, 0, 0)
+                } else {
+                    WalkPresence::BitmapPresence(bytes, 0, *presence_per_block)
+                };
             }
             TypeSpec::PaddingBits(n) => {
                 let byte_len = ((*n + 7) / 8) as usize;
@@ -844,8 +924,18 @@ impl<'a> BinaryWalkerMut<'a> {
                         *i += 1;
                         bit != 0
                     }
+                    WalkPresence::BitmapPresenceConsecutive(bytes, byte_idx, bit_offset) => {
+                        let present = *byte_idx < bytes.len() && ((bytes[*byte_idx] >> (7 - *bit_offset)) & 1) != 0;
+                        if *bit_offset == 7 {
+                            *byte_idx += 1;
+                            *bit_offset = 0;
+                        } else {
+                            *bit_offset += 1;
+                        }
+                        present
+                    }
                     WalkPresence::BitmapPresence(bytes, i, presence_per_block) => {
-                        let bits_per_block = if *presence_per_block == 0 { 8 } else { *presence_per_block as usize };
+                        let bits_per_block = *presence_per_block as usize;
                         let byte_idx = *i / bits_per_block;
                         let bit_idx = *i % bits_per_block;
                         *i += 1;
@@ -901,6 +991,7 @@ pub fn message_extent(
 /// Walks the message from `start` and verifies every field that has a `[min..max]` or
 /// `[in(...)]` constraint. No allocation; fails with [`CodecError`](crate::codec::CodecError)
 /// if any constraint is violated or the buffer is too short.
+/// Fields with [`MessageField::saturating`](crate::ast::MessageField) set (at resolve) skip the range check.
 pub fn validate_message_in_place(
     data: &[u8],
     start: usize,
@@ -925,6 +1016,18 @@ pub fn zero_padding_reserved_in_place(
 ) -> Result<(), CodecError> {
     let mut w = BinaryWalkerMut::at(data, start, resolved, endianness);
     w.zero_padding_reserved_message(message_name)
+}
+
+/// One-pass validate and zeroize: walks the message from `start`, validates constrained fields and zeros padding/reserved; returns bytes consumed.
+pub fn validate_and_zero_message_in_place(
+    data: &mut [u8],
+    start: usize,
+    resolved: &ResolvedProtocol,
+    endianness: Endianness,
+    message_name: &str,
+) -> Result<usize, CodecError> {
+    let mut w = BinaryWalkerMut::at(data, start, resolved, endianness);
+    w.validate_and_zero_message(message_name)
 }
 
 /// Removes a message from the frame by shifting bytes.
