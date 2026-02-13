@@ -9,6 +9,11 @@ use byteorder::{BigEndian, ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt}
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 
+#[cfg(feature = "codec_decode_profile")]
+use std::cell::RefCell;
+#[cfg(feature = "codec_decode_profile")]
+use std::time::Instant;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Endianness {
     Big,
@@ -33,6 +38,28 @@ pub enum CodecError {
     UnknownField(String),
     #[error("Length/count mismatch: {0}")]
     LengthMismatch(String),
+}
+
+#[cfg(feature = "codec_decode_profile")]
+fn type_spec_decode_label(spec: &TypeSpec) -> &'static str {
+    match spec {
+        TypeSpec::Base(_) => "Base",
+        TypeSpec::Padding(_) => "Padding",
+        TypeSpec::Reserved(_) => "Reserved",
+        TypeSpec::Bitfield(_) => "Bitfield",
+        TypeSpec::SizedInt(_, _) => "SizedInt",
+        TypeSpec::LengthOf(_) => "LengthOf",
+        TypeSpec::CountOf(_) => "CountOf",
+        TypeSpec::PresenceBits(_) => "PresenceBits",
+        TypeSpec::BitmapPresence { .. } => "BitmapPresence",
+        TypeSpec::PaddingBits(_) => "PaddingBits",
+        TypeSpec::StructRef(_) => "StructRef",
+        TypeSpec::Array(_, _) => "Array",
+        TypeSpec::List(_) => "List",
+        TypeSpec::RepList(_) => "RepList",
+        TypeSpec::OctetsFx => "OctetsFx",
+        TypeSpec::Optional(_) => "Optional",
+    }
 }
 
 impl Codec {
@@ -478,6 +505,8 @@ impl Codec {
         structs: &[StructSection],
         ctx: &mut DecodeContext,
     ) -> Result<Value, CodecError> {
+        #[cfg(feature = "codec_decode_profile")]
+        let _guard = DecodeProfileGuard::new(type_spec_decode_label(spec));
         match spec {
             TypeSpec::Base(bt) => {
                 self.ensure_decode_bit_aligned(ctx)?;
@@ -1459,5 +1488,64 @@ impl EncodeContext {
     }
     fn get(&self, k: &str) -> Option<&Value> {
         self.values.get(k)
+    }
+}
+
+// --- Decode profiling (feature "codec_decode_profile") ---
+
+#[cfg(feature = "codec_decode_profile")]
+#[derive(Default)]
+struct DecodeProfileStats {
+    ns_per_label: HashMap<String, u64>,
+}
+
+#[cfg(feature = "codec_decode_profile")]
+std::thread_local!(static DECODE_PROFILE: RefCell<DecodeProfileStats> = RefCell::new(DecodeProfileStats::default()));
+
+#[cfg(feature = "codec_decode_profile")]
+fn record_decode_profile(label: &'static str, d: std::time::Duration) {
+    DECODE_PROFILE.with(|p| {
+        let mut st = p.borrow_mut();
+        *st.ns_per_label.entry(label.to_string()).or_insert(0) += d.as_nanos() as u64;
+    });
+}
+
+/// Reset decode profile counters. Call before a decode run when `codec_decode_profile` is enabled.
+#[cfg(feature = "codec_decode_profile")]
+pub fn reset_decode_profile() {
+    DECODE_PROFILE.with(|p| *p.borrow_mut() = DecodeProfileStats::default());
+}
+
+/// Get decode profile (label -> nanoseconds). Empty when feature is off.
+#[cfg(feature = "codec_decode_profile")]
+pub fn get_decode_profile() -> HashMap<String, u64> {
+    DECODE_PROFILE.with(|p| p.borrow().ns_per_label.clone())
+}
+
+#[cfg(not(feature = "codec_decode_profile"))]
+pub fn reset_decode_profile() {}
+
+#[cfg(not(feature = "codec_decode_profile"))]
+pub fn get_decode_profile() -> HashMap<String, u64> {
+    HashMap::new()
+}
+
+#[cfg(feature = "codec_decode_profile")]
+struct DecodeProfileGuard {
+    label: &'static str,
+    start: Instant,
+}
+
+#[cfg(feature = "codec_decode_profile")]
+impl DecodeProfileGuard {
+    fn new(label: &'static str) -> Self {
+        DecodeProfileGuard { label, start: Instant::now() }
+    }
+}
+
+#[cfg(feature = "codec_decode_profile")]
+impl Drop for DecodeProfileGuard {
+    fn drop(&mut self) {
+        record_decode_profile(self.label, self.start.elapsed());
     }
 }

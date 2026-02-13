@@ -50,7 +50,7 @@ pub mod value;
 pub mod walk;
 
 pub use ast::{AbstractType, BitmapPresenceMapping, Protocol, ResolvedProtocol, TypeDefSection, TypeSpec};
-pub use codec::{Codec, CodecError, Endianness};
+pub use codec::{Codec, CodecError, Endianness, get_decode_profile, reset_decode_profile};
 pub use frame::{decode_frame, FrameDecodeResult};
 pub use parser::parse;
 pub use value::Value;
@@ -60,4 +60,5 @@ pub use walk::{
     remove_message_in_place, write_u32_in_place,
     BinaryWalker, BinaryWalkerMut,
     Endianness as WalkEndianness,
+    get_walk_profile, reset_walk_profile,
 };

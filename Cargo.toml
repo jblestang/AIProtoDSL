@@ -10,6 +10,11 @@ readme = "README.md"
 keywords = ["protocol", "dsl", "binary", "codec", "serialization"]
 categories = ["encoding", "parser-implementations"]
 
+[features]
+default = []
+walk_profile = []  # enable to measure time per TypeSpec in walk (reset_walk_profile + get_walk_profile)
+codec_decode_profile = []  # enable to measure time per TypeSpec in decode (reset_decode_profile + get_decode_profile)
+
 [dependencies]
 pest = "2.7"
 pest_derive = "2.7"
@@ -20,6 +25,11 @@ pcap-parser = "0.17"
 
 [dev-dependencies]
 tempfile = "3.10"
+criterion = "0.5"
+
+[[bench]]
+name = "walk_pcap"
+harness = false
 
 [[test]]
 name = "integration"
