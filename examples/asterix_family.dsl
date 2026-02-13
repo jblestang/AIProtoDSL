@@ -246,11 +246,30 @@ type Com034 {
 	tsv: integer [0..1];
 }
 
+type Psr034 {
+	// PSR sensor status (1 octet, bit-coded per EUROCONTROL CAT034)
+	status: integer [0..255];
+}
+type Ssr034 {
+	// SSR sensor status (1 octet, bit-coded per EUROCONTROL CAT034)
+	status: integer [0..255];
+}
+type Mds034 {
+	// Mode S specific status: octet 1 (ANT, CHAB, OVLSUR, MSC, SCF, DLF, OVLSCF) + octet 2 (OVLDLF, spare)
+	ant: integer [0..1];
+	chab: integer [0..3];
+	ovlsur: integer [0..1];
+	msc: integer [0..1];
+	scf: integer [0..1];
+	dlf: integer [0..1];
+	ovlscf: integer [0..1];
+	ovldlf: integer [0..1];
+}
 type SystemConfig034 {
 	com: Com034?;
-	psr: integer? [0..255];
-	ssr: integer? [0..255];
-	mds: integer? [0..255];
+	psr: Psr034?;
+	ssr: Ssr034?;
+	mds: Mds034?;
 }
 
 type RdpXmt034 {
@@ -766,12 +785,33 @@ struct Com034 {
 	spare: padding_bits(1);
 }
 
+struct Psr034 {
+	// 1 octet: PSR sensor status bits (EUROCONTROL CAT034 I034/050)
+	status: u8 [0..255];
+}
+struct Ssr034 {
+	// 1 octet: SSR sensor status bits (EUROCONTROL CAT034 I034/050)
+	status: u8 [0..255];
+}
+struct Mds034 {
+	// Octet 1: ANT(1), CHAB(2), OVLSUR(1), MSC(1), SCF(1), DLF(1), OVLSCF(1)
+	ant: bitfield(1) [0..1];
+	chab: bitfield(2) [0..3];
+	ovlsur: bitfield(1) [0..1];
+	msc: bitfield(1) [0..1];
+	scf: bitfield(1) [0..1];
+	dlf: bitfield(1) [0..1];
+	ovlscf: bitfield(1) [0..1];
+	// Octet 2: OVLDLF(1), spare(7)
+	ovldlf: bitfield(1) [0..1];
+	spare: padding_bits(7);
+}
 struct SystemConfig034 {
-	fspec: bitmap_presence(7, 7) -> (0: com, 1: psr, 2: ssr, 3: mds);
+	fspec: bitmap_presence(7, 7) -> (0: com, 3: psr, 4: ssr, 5: mds);
 	com: optional<Com034>;
-	psr: optional<u8> [0..255];
-	ssr: optional<u8> [0..255];
-	mds: optional<u8> [0..255];
+	psr: optional<Psr034>;
+	ssr: optional<Ssr034>;
+	mds: optional<Mds034>;
 }
 
 
