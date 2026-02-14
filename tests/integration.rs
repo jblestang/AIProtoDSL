@@ -433,6 +433,13 @@ fn test_asterix_family_parse() {
     assert_eq!(bp.field_for_bit(0), Some("i048_010"));
     assert_eq!(bp.bit_for_field("i048_161"), Some(10));
     assert_eq!(bp.bit_for_field("i048_130"), Some(6));
+
+    // field_quantum_and_child: struct fields have quantum; optional struct ref gives child container
+    let (q_rho, child_040) = resolved.field_quantum_and_child("MeasuredPositionPolar", "rho");
+    assert_eq!(q_rho, Some("1/256 NM"), "rho quantum");
+    assert_eq!(child_040, None);
+    let (_q, child_040) = resolved.field_quantum_and_child("Cat048Record", "i048_040");
+    assert_eq!(child_040, Some("MeasuredPositionPolar"), "i048_040 is optional MeasuredPositionPolar");
 }
 
 /// Decode frame 1 CAT048 block (bitmap 0xFD 0xF7 0x02 => I048/130 absent). Verifies mapping is applied so we skip 130 and decode past 161.

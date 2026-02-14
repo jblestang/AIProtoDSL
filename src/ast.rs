@@ -572,4 +572,36 @@ impl ResolvedProtocol {
             .get(name)
             .map(|&i| &self.protocol.messages[i])
     }
+
+    /// Returns (quantum string if any, child struct name when field is struct or list-of-struct).
+    /// Use when dumping: quantum for scalar display; child struct name for recursing into Struct/List values.
+    pub fn field_quantum_and_child(&self, container: &str, field_name: &str) -> (Option<&str>, Option<&str>) {
+        if let Some(msg) = self.get_message(container) {
+            if let Some(f) = msg.fields.iter().find(|f| f.name == field_name) {
+                return (f.quantum.as_deref(), type_spec_child_struct(&f.type_spec));
+            }
+        }
+        if let Some(s) = self.get_struct(container) {
+            if let Some(f) = s.fields.iter().find(|f| f.name == field_name) {
+                return (f.quantum.as_deref(), type_spec_child_struct(&f.type_spec));
+            }
+        }
+        (None, None)
+    }
+}
+
+/// Child struct name for StructRef, Optional(StructRef), or List/RepList of StructRef.
+fn type_spec_child_struct(ts: &TypeSpec) -> Option<&str> {
+    match ts {
+        TypeSpec::StructRef(s) => Some(s.as_str()),
+        TypeSpec::Optional(inner) => type_spec_child_struct(inner),
+        TypeSpec::List(inner) | TypeSpec::RepList(inner) => {
+            if let TypeSpec::StructRef(s) = inner.as_ref() {
+                Some(s.as_str())
+            } else {
+                type_spec_child_struct(inner)
+            }
+        }
+        _ => None,
+    }
 }

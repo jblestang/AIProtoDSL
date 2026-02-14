@@ -9,42 +9,135 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
-/// Format a Value for text dump (compact, one line for scalars).
-fn value_to_dump(v: &Value, indent: usize) -> String {
+/// Parse quantum string (e.g. "1/256 NM", "360/65536 °", "2^(-10) NM/s", "0.25 FL") into (scale, unit).
+fn parse_quantum(quantum_str: &str) -> Option<(f64, String)> {
+    let s = quantum_str.trim();
+    let (scale_str, unit) = match s.find(' ') {
+        Some(i) => (s[..i].trim(), s[i + 1..].trim().to_string()),
+        None => (s, String::new()),
+    };
+    let scale = parse_scale_expr(scale_str)?;
+    Some((scale, unit))
+}
+
+fn parse_scale_expr(s: &str) -> Option<f64> {
+    let s = s.trim();
+    // "num/denom" or "num/2^exp"
+    if let Some(slash) = s.find('/') {
+        let num_str = s[..slash].trim();
+        let denom_str = s[slash + 1..].trim();
+        let num: f64 = num_str.parse().ok()?;
+        let denom: f64 = if let Some(exp_str) = denom_str.strip_prefix("2^") {
+            let exp_str = exp_str.trim_matches(|c| c == '(' || c == ')');
+            let exp: i32 = exp_str.parse().ok()?;
+            if exp >= 0 {
+                (1u64 << exp) as f64
+            } else {
+                1.0 / (1u64 << (-exp) as u32) as f64
+            }
+        } else {
+            denom_str.parse().ok()?
+        };
+        return Some(num / denom);
+    }
+    // "2^exp" or "2^(-exp)"
+    if let Some(exp_str) = s.strip_prefix("2^") {
+        let exp_str = exp_str.trim_matches(|c| c == '(' || c == ')');
+        let exp: i32 = exp_str.parse().ok()?;
+        return Some(if exp >= 0 {
+            (1u64 << exp) as f64
+        } else {
+            1.0 / (1u64 << (-exp) as u32) as f64
+        });
+    }
+    s.parse::<f64>().ok()
+}
+
+/// Format a scalar value with optional quantum (scale + unit). Raw value is shown if conversion fails.
+fn format_scalar_with_quantum(v: &Value, quantum: Option<&str>) -> String {
+    let (scale, unit) = match quantum.and_then(parse_quantum) {
+        Some((s, u)) => (s, u),
+        None => return format_scalar_raw(v),
+    };
+    let raw = match v {
+        Value::U8(x) => *x as f64,
+        Value::U16(x) => *x as f64,
+        Value::U32(x) => *x as f64,
+        Value::U64(x) => *x as f64,
+        Value::I8(x) => *x as f64,
+        Value::I16(x) => *x as f64,
+        Value::I32(x) => *x as f64,
+        Value::I64(x) => *x as f64,
+        Value::Float(x) => *x as f64,
+        Value::Double(x) => *x,
+        _ => return format_scalar_raw(v),
+    };
+    let physical = raw * scale;
+    if unit.is_empty() {
+        format!("{} ({})", physical, format_scalar_raw(v))
+    } else {
+        format!("{} {} ({})", physical, unit, format_scalar_raw(v))
+    }
+}
+
+fn format_scalar_raw(v: &Value) -> String {
+    match v {
+        Value::U8(x) => format!("{}", x),
+        Value::U16(x) => format!("{}", x),
+        Value::U32(x) => format!("{}", x),
+        Value::U64(x) => format!("{}", x),
+        Value::I8(x) => format!("{}", x),
+        Value::I16(x) => format!("{}", x),
+        Value::I32(x) => format!("{}", x),
+        Value::I64(x) => format!("{}", x),
+        Value::Bool(x) => format!("{}", x),
+        Value::Float(x) => format!("{}", x),
+        Value::Double(x) => format!("{}", x),
+        _ => format!("{:?}", v),
+    }
+}
+
+/// Format a Value for text dump (compact). Uses resolved protocol to show quantum/units when available.
+fn value_to_dump(
+    resolved: &ResolvedProtocol,
+    container_name: &str,
+    field_name: &str,
+    v: &Value,
+    indent: usize,
+) -> String {
     let pad = "  ".repeat(indent);
     match v {
-        Value::U8(x) => format!("{}{}", pad, x),
-        Value::U16(x) => format!("{}{}", pad, x),
-        Value::U32(x) => format!("{}{}", pad, x),
-        Value::U64(x) => format!("{}{}", pad, x),
-        Value::I8(x) => format!("{}{}", pad, x),
-        Value::I16(x) => format!("{}{}", pad, x),
-        Value::I32(x) => format!("{}{}", pad, x),
-        Value::I64(x) => format!("{}{}", pad, x),
-        Value::Bool(x) => format!("{}{}", pad, x),
-        Value::Float(x) => format!("{}{}", pad, x),
-        Value::Double(x) => format!("{}{}", pad, x),
+        Value::U8(_) | Value::U16(_) | Value::U32(_) | Value::U64(_)
+        | Value::I8(_) | Value::I16(_) | Value::I32(_) | Value::I64(_)
+        | Value::Bool(_) | Value::Float(_) | Value::Double(_) => {
+            let (quantum, _) = resolved.field_quantum_and_child(container_name, field_name);
+            format!("{}{}", pad, format_scalar_with_quantum(v, quantum))
+        }
         Value::Bytes(b) => format!("{}hex({})", pad, hex_string(b)),
         Value::Struct(m) => {
+            let (_, child_container) = resolved.field_quantum_and_child(container_name, field_name);
+            let container = child_container.unwrap_or(container_name);
             let mut lines: Vec<String> = vec![format!("{}struct {{", pad)];
             let mut keys: Vec<_> = m.keys().collect();
             keys.sort();
             for k in keys {
-                let sub = value_to_dump(m.get(k).unwrap(), indent + 1);
+                let sub = value_to_dump(resolved, container, k, m.get(k).unwrap(), indent + 1);
                 lines.push(format!("  {}: {}", k, sub.trim_start()));
             }
             lines.push(format!("{}}}", pad));
             lines.join("\n")
         }
         Value::List(lst) => {
+            let (_, child_container) = resolved.field_quantum_and_child(container_name, field_name);
+            let elem_container = child_container.unwrap_or(container_name);
             if lst.is_empty() {
                 format!("{}[]", pad)
             } else if lst.len() == 1 {
-                value_to_dump(&lst[0], indent)
+                value_to_dump(resolved, elem_container, field_name, &lst[0], indent)
             } else {
                 let mut lines: Vec<String> = vec![format!("{}[", pad)];
                 for (i, item) in lst.iter().enumerate() {
-                    let sub = value_to_dump(item, indent + 1);
+                    let sub = value_to_dump(resolved, elem_container, &format!("[{}]", i), item, indent + 1);
                     lines.push(format!("  [{}] {}", i, sub.trim_start()));
                 }
                 lines.push(format!("{}]", pad));
@@ -411,7 +504,7 @@ fn process_udp_payload(
                                         keys.sort();
                                         for k in keys {
                                             let v = msg.values.get(k).unwrap();
-                                            let txt = value_to_dump(v, 0);
+                                            let txt = value_to_dump(resolved, &msg.name, k, v, 0);
                                             let mut lines = txt.lines();
                                             if let Some(first) = lines.next() {
                                                 let _ = writeln!(w, "    {}: {}", k, first.trim_start());
