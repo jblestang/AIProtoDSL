@@ -62,7 +62,7 @@ struct Header {
 ### Constraints
 
 - **Range:** one interval `[min..max]` (e.g. `[0..255]`) or concatenation of intervals `[min1..max1, min2..max2, ...]` (value valid if in any interval)
-- **Enum:** `[in(0, 1, 2)]`
+- **Enum:** `[(0, 1, 2)]` (value must be one of the listed literals)
 
 ### Conditional fields
 

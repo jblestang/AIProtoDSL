@@ -422,7 +422,7 @@ impl BitmapPresenceMapping {
     }
 }
 
-/// Resolved protocol: structs and messages by name for codec, type definitions by name for validation.
+/// Resolved protocol: structs, messages, enums by name for codec; type definitions by name for validation.
 #[derive(Debug, Clone)]
 pub struct ResolvedProtocol {
     pub protocol: Protocol,
@@ -430,6 +430,8 @@ pub struct ResolvedProtocol {
     pub type_defs_by_name: HashMap<String, usize>,
     pub structs_by_name: HashMap<String, usize>,
     pub messages_by_name: HashMap<String, usize>,
+    /// Enum name -> index (for encoding types that reference an enum, e.g. optional<Cat034MessageType>).
+    pub enums_by_name: HashMap<String, usize>,
     /// Message name -> bitmap presence field and the optional fields it governs.
     pub message_bitmap_presence: HashMap<String, BitmapPresenceMapping>,
     /// Struct name -> bitmap presence field and the optional fields it governs.
@@ -441,6 +443,7 @@ impl ResolvedProtocol {
         let mut type_defs_by_name = HashMap::new();
         let mut structs_by_name = HashMap::new();
         let mut messages_by_name = HashMap::new();
+        let mut enums_by_name = HashMap::new();
         for (i, t) in protocol.type_defs.iter().enumerate() {
             if type_defs_by_name.insert(t.name.clone(), i).is_some() {
                 return Err(format!("Duplicate type name: {}", t.name));
@@ -454,6 +457,11 @@ impl ResolvedProtocol {
         for (i, m) in protocol.messages.iter().enumerate() {
             if messages_by_name.insert(m.name.clone(), i).is_some() {
                 return Err(format!("Duplicate message name: {}", m.name));
+            }
+        }
+        for (i, e) in protocol.enum_defs.iter().enumerate() {
+            if enums_by_name.insert(e.name.clone(), i).is_some() {
+                return Err(format!("Duplicate enum name: {}", e.name));
             }
         }
         if let Some(ref payload) = protocol.payload {
@@ -486,9 +494,17 @@ impl ResolvedProtocol {
             type_defs_by_name,
             structs_by_name,
             messages_by_name,
+            enums_by_name,
             message_bitmap_presence,
             struct_bitmap_presence,
         })
+    }
+
+    /// Get an enum definition by name. Used when a type ref (e.g. Cat034MessageType) refers to an enum.
+    pub fn get_enum(&self, name: &str) -> Option<&EnumSection> {
+        self.enums_by_name
+            .get(name)
+            .map(|&i| &self.protocol.enum_defs[i])
     }
 
     /// Mapping from bitmap presence field to optional fields for a message. None if the message has no such field.
@@ -587,6 +603,81 @@ impl ResolvedProtocol {
             }
         }
         (None, None)
+    }
+
+    /// Returns the constraint for a field (message or struct). Used when dumping to detect enum constraints.
+    pub fn field_constraint(&self, container: &str, field_name: &str) -> Option<&Constraint> {
+        if let Some(msg) = self.get_message(container) {
+            if let Some(f) = msg.fields.iter().find(|f| f.name == field_name) {
+                return f.constraint.as_ref();
+            }
+        }
+        if let Some(s) = self.get_struct(container) {
+            if let Some(f) = s.fields.iter().find(|f| f.name == field_name) {
+                return f.constraint.as_ref();
+            }
+        }
+        None
+    }
+
+    /// Returns the type spec for a field. Used when dumping to detect enum ref (show variant name).
+    pub fn field_type_spec(&self, container: &str, field_name: &str) -> Option<&TypeSpec> {
+        if let Some(msg) = self.get_message(container) {
+            if let Some(f) = msg.fields.iter().find(|f| f.name == field_name) {
+                return Some(&f.type_spec);
+            }
+        }
+        if let Some(s) = self.get_struct(container) {
+            if let Some(f) = s.fields.iter().find(|f| f.name == field_name) {
+                return Some(&f.type_spec);
+            }
+        }
+        None
+    }
+
+    /// If the type spec is StructRef(name) and name is an enum, return variant name for the given value.
+    pub fn enum_variant_name_for_type_and_value(&self, type_spec: &TypeSpec, value: i64) -> Option<String> {
+        let TypeSpec::StructRef(name) = type_spec else {
+            return None;
+        };
+        let enum_sec = self.get_enum(name)?;
+        for (variant_name, lit) in &enum_sec.variants {
+            if lit.as_i64() == Some(value) {
+                return Some(variant_name.clone());
+            }
+        }
+        None
+    }
+
+    /// If constraint is Enum and the value matches a variant of some protocol enum, returns that variant's name.
+    /// Used when dumping: show enum variant name instead of raw number.
+    pub fn enum_variant_name_for_value(&self, constraint: &Constraint, value: i64) -> Option<String> {
+        let Constraint::Enum(literals) = constraint else {
+            return None;
+        };
+        let constraint_set: std::collections::HashSet<i64> = literals
+            .iter()
+            .filter_map(|lit| lit.as_i64())
+            .collect();
+        if constraint_set.is_empty() || !constraint_set.contains(&value) {
+            return None;
+        }
+        for enum_section in &self.protocol.enum_defs {
+            let enum_values: std::collections::HashSet<i64> = enum_section
+                .variants
+                .iter()
+                .filter_map(|(_, lit)| lit.as_i64())
+                .collect();
+            if enum_values == constraint_set {
+                for (name, lit) in &enum_section.variants {
+                    if lit.as_i64() == Some(value) {
+                        return Some(name.clone());
+                    }
+                }
+                break;
+            }
+        }
+        None
     }
 }
 

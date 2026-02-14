@@ -121,7 +121,7 @@ array_len = { ident | num }  // count field name or constant
 constraint = { range_constraint | enum_constraint }
 interval = { num ~ ".." ~ num }
 range_constraint = { interval ~ ("," ~ interval)* }
-enum_constraint  = { "in" ~ "(" ~ literal ~ ("," ~ literal)* ~ ")" }
+enum_constraint  = { "(" ~ literal ~ ("," ~ literal)* ~ ")" }
 // Quantum: resolution/unit per spec (e.g. "1/256 NM", "360/65536 °")
 quantum_spec = { "quantum" ~ string_literal }
 

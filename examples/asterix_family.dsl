@@ -163,7 +163,7 @@ type ModeCCodeConfidence {
 }
 
 type TimeOfDay24 {
-	tod: integer [0..16777215];
+	tod: integer [0..16777215] quantum "1/128 s";
 }
 
 type TrackNumber {
@@ -443,7 +443,7 @@ message Cat002Record {
 	7: i002_070, 8: i002_100, 9: i002_090, 10: i002_080
 	);
 	i002_010: optional<DataSourceId>;
-	i002_000: optional<u8> [in(1, 2, 3, 8, 9)];
+	i002_000: optional<u8> [(1, 2, 3, 8, 9)];
 	i002_020: optional<u8> [0..255];
 	i002_030: optional<TimeOfDay24>;
 	i002_041: optional<u16> [0..65535];
@@ -464,7 +464,7 @@ message Cat034Record {
 	7: i034_070, 8: i034_100, 9: i034_110, 10: i034_120, 11: i034_090
 	);
 	i034_010: optional<DataSourceId>;
-	i034_000: optional<u8> [in(1, 2, 3, 4, 5)];
+	i034_000: optional<Cat034MessageType>;
 	i034_030: optional<TimeOfDay24>;
 	i034_020: optional<u8> [0..255];
 	i034_041: optional<u16> [0..65535];
@@ -664,7 +664,7 @@ struct ModeCCodeConfidence {
 }
 
 struct TimeOfDay24 {
-	tod: u32(24) [0..16777215];
+	tod: u32(24) [0..16777215] quantum "1/128 s";
 }
 
 struct TrackNumber {

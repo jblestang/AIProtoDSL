@@ -18,7 +18,7 @@
 //! - Sized int: `u8(n)` … `i64(n)` for integers in n bits (e.g. `u16(14)`, `i16(10)`)
 //! - `length_of(field)`, `count_of(field)` for length/count fields
 //! - Struct references, `list<T>`, `optional<T>`, `T[n]` (fixed or count-based)
-//! - Constraints: `[min..max]` or concatenation `[min1..max1, min2..max2, ...]`, `[in(a, b, c)]`
+//! - Constraints: `[min..max]` or concatenation `[min1..max1, min2..max2, ...]`, `[(a, b, c)]` (enum)
 //!
 //! ## Example DSL
 //!

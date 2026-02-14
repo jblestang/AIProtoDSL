@@ -200,7 +200,7 @@ message M {
 fn parse_constraints_enum() {
     let src = r#"
 message M {
-  k: u8 [in(0, 1, 2)];
+  k: u8 [(0, 1, 2)];
 }
 "#;
     let p = parse(src).expect("parse");

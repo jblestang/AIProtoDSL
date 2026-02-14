@@ -661,8 +661,20 @@ impl Codec {
             }
             TypeSpec::StructRef(name) => {
                 self.ensure_decode_bit_aligned(ctx)?;
-                let s = self.resolved.get_struct(name).ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
-                self.decode_struct(r, s, structs, ctx)
+                if let Some(enum_sec) = self.resolved.get_enum(name) {
+                    let raw = r.read_u8()? as i64;
+                    let ok = enum_sec.variants.iter().any(|(_, lit)| lit.as_i64() == Some(raw));
+                    if !ok {
+                        return Err(CodecError::Validation(format!(
+                            "enum {}: value {} not in allowed set",
+                            name, raw
+                        )));
+                    }
+                    Ok(Value::U8(raw as u8))
+                } else {
+                    let s = self.resolved.get_struct(name).ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
+                    self.decode_struct(r, s, structs, ctx)
+                }
             }
             TypeSpec::Array(elem, len) => {
                 self.ensure_decode_bit_aligned(ctx)?;
@@ -848,11 +860,24 @@ impl Codec {
             }
             TypeSpec::StructRef(name) => {
                 self.ensure_encode_bit_aligned(ctx)?;
-                let s = self.resolved.get_struct(name).ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
-                let m = v.as_struct().cloned().unwrap_or_default();
-                let mut sub = EncodeContext::from_values(&m);
-                self.encode_struct(w, s, structs, &mut sub)?;
-                Ok(())
+                if let Some(enum_sec) = self.resolved.get_enum(name) {
+                    let raw = v.as_u64().unwrap_or(0) as u8;
+                    let ok = enum_sec.variants.iter().any(|(_, lit)| lit.as_i64() == Some(raw as i64));
+                    if !ok {
+                        return Err(CodecError::Validation(format!(
+                            "enum {}: value {} not in allowed set",
+                            name, raw
+                        )));
+                    }
+                    w.write_all(&[raw])?;
+                    Ok(())
+                } else {
+                    let s = self.resolved.get_struct(name).ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
+                    let m = v.as_struct().cloned().unwrap_or_default();
+                    let mut sub = EncodeContext::from_values(&m);
+                    self.encode_struct(w, s, structs, &mut sub)?;
+                    Ok(())
+                }
             }
             TypeSpec::Array(elem, _len) => {
                 self.ensure_encode_bit_aligned(ctx)?;
@@ -1156,7 +1181,13 @@ impl Codec {
             TypeSpec::Padding(_) => Value::Padding,
             TypeSpec::List(_) => Value::List(vec![]),
             TypeSpec::OctetsFx => Value::Bytes(vec![]),
-            TypeSpec::StructRef(_) => Value::Struct(HashMap::new()),
+            TypeSpec::StructRef(name) => {
+                if self.resolved.get_enum(name).is_some() {
+                    Value::U8(0)
+                } else {
+                    Value::Struct(HashMap::new())
+                }
+            }
             TypeSpec::BitmapPresence { .. } => Value::Bytes(vec![]),
             _ => Value::U64(0),
         }

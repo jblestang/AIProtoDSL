@@ -53,7 +53,26 @@ fn parse_scale_expr(s: &str) -> Option<f64> {
     s.parse::<f64>().ok()
 }
 
+/// Format seconds since midnight as HH:MM:SS (optionally HH:MM:SS.ff for fractional seconds).
+fn format_seconds_as_tod(seconds: f64) -> String {
+    if seconds < 0.0 || !seconds.is_finite() {
+        return format!("{}", seconds);
+    }
+    let secs = seconds % 86400.0; // wrap to 0..86400
+    let h = (secs / 3600.0) as u32;
+    let m = ((secs % 3600.0) / 60.0) as u32;
+    let s_frac = secs % 60.0;
+    let s = s_frac as u32;
+    let frac = s_frac - (s as f64);
+    if frac.abs() > 1e-6 {
+        format!("{:02}:{:02}:{:02}.{:03}", h, m, s, (frac * 1000.0) as u32)
+    } else {
+        format!("{:02}:{:02}:{:02}", h, m, s)
+    }
+}
+
 /// Format a scalar value with optional quantum (scale + unit). Raw value is shown if conversion fails.
+/// When unit is seconds (e.g. "s"), time-of-day values are also shown as HH:MM:SS.
 fn format_scalar_with_quantum(v: &Value, quantum: Option<&str>) -> String {
     let (scale, unit) = match quantum.and_then(parse_quantum) {
         Some((s, u)) => (s, u),
@@ -73,7 +92,10 @@ fn format_scalar_with_quantum(v: &Value, quantum: Option<&str>) -> String {
         _ => return format_scalar_raw(v),
     };
     let physical = raw * scale;
-    if unit.is_empty() {
+    let is_tod_seconds = unit.eq_ignore_ascii_case("s") || unit.eq_ignore_ascii_case("sec");
+    if is_tod_seconds && physical >= 0.0 && physical < 86400.0 * 2.0 {
+        format!("{} ({})", format_seconds_as_tod(physical), format_scalar_raw(v))
+    } else if unit.is_empty() {
         format!("{} ({})", physical, format_scalar_raw(v))
     } else {
         format!("{} {} ({})", physical, unit, format_scalar_raw(v))
@@ -110,6 +132,32 @@ fn value_to_dump(
         Value::U8(_) | Value::U16(_) | Value::U32(_) | Value::U64(_)
         | Value::I8(_) | Value::I16(_) | Value::I32(_) | Value::I64(_)
         | Value::Bool(_) | Value::Float(_) | Value::Double(_) => {
+            let val_i64 = v.as_i64();
+            if let Some(n) = val_i64 {
+                if resolved.get_enum(container_name).is_some() {
+                    if let Some(name) = resolved.enum_variant_name_for_type_and_value(
+                        &aiprotodsl::TypeSpec::StructRef(container_name.to_string()),
+                        n,
+                    ) {
+                        return format!("{}{}", pad, name);
+                    }
+                }
+                if let Some(ts) = resolved.field_type_spec(container_name, field_name) {
+                    // When field is optional<Enum>, type_spec is Optional(StructRef); unwrap for variant lookup.
+                    let ts_for_enum = match ts {
+                        aiprotodsl::TypeSpec::Optional(inner) => inner.as_ref(),
+                        _ => ts,
+                    };
+                    if let Some(name) = resolved.enum_variant_name_for_type_and_value(ts_for_enum, n) {
+                        return format!("{}{}", pad, name);
+                    }
+                }
+                if let Some(c) = resolved.field_constraint(container_name, field_name) {
+                    if let Some(name) = resolved.enum_variant_name_for_value(c, n) {
+                        return format!("{}{}", pad, name);
+                    }
+                }
+            }
             let (quantum, _) = resolved.field_quantum_and_child(container_name, field_name);
             format!("{}{}", pad, format_scalar_with_quantum(v, quantum))
         }

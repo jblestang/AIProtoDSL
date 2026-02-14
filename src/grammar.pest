@@ -119,7 +119,7 @@ array_len = { ident | num }
 constraint = { range_constraint | enum_constraint }
 interval = { num ~ ".." ~ num }
 range_constraint = { interval ~ ("," ~ interval)* }
-enum_constraint  = { "in" ~ "(" ~ literal ~ ("," ~ literal)* ~ ")" }
+enum_constraint  = { "(" ~ literal ~ ("," ~ literal)* ~ ")" }
 
 // --- Literals ---
 literal = { num | "true" | "false" | hex_literal | string_literal }

@@ -358,6 +358,12 @@ fn test_asterix_family_parse() {
     assert!(resolved.get_message("Cat048Record").is_some());
     assert!(resolved.get_message("Cat034Record").is_some());
     assert!(resolved.get_message("Cat240Record").is_some());
+    assert!(resolved.get_enum("Cat034MessageType").is_some(), "Cat034MessageType enum should be resolved");
+    let variant_name = resolved.enum_variant_name_for_type_and_value(
+        &TypeSpec::StructRef("Cat034MessageType".to_string()),
+        2,
+    );
+    assert_eq!(variant_name.as_deref(), Some("SectorCrossing"), "enum value 2 should be SectorCrossing");
     assert!(resolved.get_struct("DataSourceId").is_some());
     // TrackNumber.spare must be bit padding so decode uses 4 bits not 4 bytes
     let track = resolved.get_struct("TrackNumber").expect("TrackNumber");

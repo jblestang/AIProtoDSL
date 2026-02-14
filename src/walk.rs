@@ -508,8 +508,15 @@ impl<'a> BinaryWalker<'a> {
             TypeSpec::StructRef(name) => {
                 #[cfg(feature = "walk_profile")]
                 let _g = ProfileGuard::new("StructRef");
-                let s = self.resolved.get_struct(name).ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
-                self.skip_struct_fields(s.fields.as_slice())?;
+                if self.resolved.get_enum(name).is_some() {
+                    if self.pos + 1 > self.data.len() {
+                        return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                    }
+                    self.pos += 1;
+                } else {
+                    let s = self.resolved.get_struct(name).ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
+                    self.skip_struct_fields(s.fields.as_slice())?;
+                }
             }
             TypeSpec::Array(elem, len) => {
                 #[cfg(feature = "walk_profile")]
@@ -780,16 +787,23 @@ impl<'a> BinaryWalkerMut<'a> {
                 };
             }
             TypeSpec::StructRef(name) => {
-                let s = self.resolved.get_struct(name).ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
-                for f in &s.fields {
-                    if let Some(ref cond) = f.condition {
-                        let cond_val = self.ctx.get(cond.field.as_str()).map(|u| u as i64);
-                        let expected = cond.value.as_i64();
-                        if cond_val != expected {
-                            continue;
-                        }
+                if self.resolved.get_enum(name).is_some() {
+                    if self.pos < self.data.len() {
+                        self.data[self.pos] = 0;
                     }
-                    self.zero_or_skip_type_spec(&f.type_spec, Some(&f.name))?;
+                    self.pos += 1;
+                } else {
+                    let s = self.resolved.get_struct(name).ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
+                    for f in &s.fields {
+                        if let Some(ref cond) = f.condition {
+                            let cond_val = self.ctx.get(cond.field.as_str()).map(|u| u as i64);
+                            let expected = cond.value.as_i64();
+                            if cond_val != expected {
+                                continue;
+                            }
+                        }
+                        self.zero_or_skip_type_spec(&f.type_spec, Some(&f.name))?;
+                    }
                 }
             }
             TypeSpec::Array(elem, len) => {
@@ -973,16 +987,32 @@ impl<'a> BinaryWalkerMut<'a> {
                 };
             }
             TypeSpec::StructRef(name) => {
-                let s = self.resolved.get_struct(name).ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
-                for f in &s.fields {
-                    if let Some(ref cond) = f.condition {
-                        let cond_val = self.ctx.get(cond.field.as_str()).map(|u| u as i64);
-                        let expected = cond.value.as_i64();
-                        if cond_val != expected {
-                            continue;
-                        }
+                if self.resolved.get_enum(name).is_some() {
+                    if self.pos + 1 > self.data.len() {
+                        return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
                     }
-                    self.skip_type_spec(&f.type_spec, Some(&f.name))?;
+                    let byte = self.data[self.pos] as i64;
+                    let enum_sec = self.resolved.get_enum(name).unwrap();
+                    let ok = enum_sec.variants.iter().any(|(_, lit)| lit.as_i64() == Some(byte));
+                    if !ok {
+                        return Err(CodecError::Validation(format!(
+                            "enum {}: value {} not in allowed set",
+                            name, byte
+                        )));
+                    }
+                    self.pos += 1;
+                } else {
+                    let s = self.resolved.get_struct(name).ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
+                    for f in &s.fields {
+                        if let Some(ref cond) = f.condition {
+                            let cond_val = self.ctx.get(cond.field.as_str()).map(|u| u as i64);
+                            let expected = cond.value.as_i64();
+                            if cond_val != expected {
+                                continue;
+                            }
+                        }
+                        self.skip_type_spec(&f.type_spec, Some(&f.name))?;
+                    }
                 }
             }
             TypeSpec::Array(elem, len) => {
@@ -1095,7 +1125,7 @@ pub fn message_extent(
 /// Validates a message in place by reading only constrained fields and checking ranges/enums.
 ///
 /// Walks the message from `start` and verifies every field that has a `[min..max]` or
-/// `[in(...)]` constraint. No allocation; fails with [`CodecError`](crate::codec::CodecError)
+/// `[(...)]` enum constraint. No allocation; fails with [`CodecError`](crate::codec::CodecError)
 /// if any constraint is violated or the buffer is too short.
 /// Fields with [`MessageField::saturating`](crate::ast::MessageField) set (at resolve) skip the range check.
 pub fn validate_message_in_place(
