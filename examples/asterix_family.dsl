@@ -48,357 +48,580 @@ enum Cat002MessageType {
 // Abstract types (logical model) and encoding structs below follow EUROCONTROL data items
 // (e.g. I048/010 Data Source Identifier, I048/040 Measured Position). Fields map to spec subfields.
 type DataSourceId {
+	@doc "System Area Code (SAC); part of Data Source Identifier"
 	sac: integer [0..255];
+	@doc "System Identification Code (SIC); part of Data Source Identifier"
 	sic: integer [0..255];
 }
 
 type TargetReportDescriptor001 {
+	@doc "Report type (0=single, 1=multiple)"
 	typ: integer [0..1];
+	@doc "Simulated target"
 	sim: integer [0..1];
+	@doc "SSR/PSR mode (0–3)"
 	ssrpsr: integer [0..3];
+	@doc "Antenna (0=main, 1=auxiliary)"
 	ant: integer [0..1];
+	@doc "Special position identification"
 	spi: integer [0..1];
+	@doc "Range ambiguity"
 	rab: integer [0..1];
 }
 
 type TargetReportDescriptor048 {
+	@doc "Report type (0–7)"
 	typ: integer [0..7];
+	@doc "Simulated target"
 	sim: integer [0..1];
+	@doc "Radar data processing chain"
 	rdp: integer [0..1];
+	@doc "Special position identification"
 	spi: integer [0..1];
+	@doc "Range ambiguity"
 	rab: integer [0..1];
 }
 
 type MeasuredPositionPolar {
+	@doc "Slant range (rho) in 1/256 NM"
 	rho: integer [0..65535] quantum "1/256 NM";
+	@doc "Azimuth (theta) in 360/65536 degrees"
 	theta: integer [0..65535] quantum "360/65536 °";
 }
 
 type CalculatedPositionCartesian {
+	@doc "X coordinate in 1/128 NM (cartesian)"
 	x: integer [-32768..32767] quantum "1/128 NM";
+	@doc "Y coordinate in 1/128 NM (cartesian)"
 	y: integer [-32768..32767] quantum "1/128 NM";
 }
 
 type Mode2Code {
+	@doc "Valid (0=invalid, 1=valid)"
 	v: integer [0..1];
+	@doc "Garbled"
 	g: integer [0..1];
+	@doc "Lock (0=default, 1=lock)"
 	l: integer [0..1];
+	@doc "Mode 2 code (12 bits, 0–4095)"
 	mode2: integer [0..4095];
 }
 
 type Mode1Code {
+	@doc "Valid (0=invalid, 1=valid)"
 	v: integer [0..1];
+	@doc "Garbled"
 	g: integer [0..1];
+	@doc "Lock"
 	l: integer [0..1];
+	@doc "Mode 1 code (5 bits, 0–31)"
 	mode1: integer [0..31];
 }
 
 type Mode3ACode {
+	@doc "Valid (0=invalid, 1=valid)"
 	v: integer [0..1];
+	@doc "Garbled"
 	g: integer [0..1];
+	@doc "Lock"
 	l: integer [0..1];
+	@doc "Mode 3/A code (12 bits, 0–4095)"
 	mode3a: integer [0..4095];
 }
 
 type Mode2Confidence {
+	@doc "Confidence digit A (4)"
 	qa4: integer [0..1];
+	@doc "Confidence digit A (2)"
 	qa2: integer [0..1];
+	@doc "Confidence digit A (1)"
 	qa1: integer [0..1];
+	@doc "Confidence digit B (4)"
 	qb4: integer [0..1];
+	@doc "Confidence digit B (2)"
 	qb2: integer [0..1];
+	@doc "Confidence digit B (1)"
 	qb1: integer [0..1];
+	@doc "Confidence digit C (4)"
 	qc4: integer [0..1];
+	@doc "Confidence digit C (2)"
 	qc2: integer [0..1];
+	@doc "Confidence digit C (1)"
 	qc1: integer [0..1];
+	@doc "Confidence digit D (4)"
 	qd4: integer [0..1];
+	@doc "Confidence digit D (2)"
 	qd2: integer [0..1];
+	@doc "Confidence digit D (1)"
 	qd1: integer [0..1];
 }
 
 type Mode1Confidence {
+	@doc "Confidence digit A (4)"
 	qa4: integer [0..1];
+	@doc "Confidence digit A (2)"
 	qa2: integer [0..1];
+	@doc "Confidence digit A (1)"
 	qa1: integer [0..1];
+	@doc "Confidence digit B (2)"
 	qb2: integer [0..1];
+	@doc "Confidence digit B (1)"
 	qb1: integer [0..1];
 }
 
 type Mode3AConfidence {
+	@doc "Confidence digit A (4)"
 	qa4: integer [0..1];
+	@doc "Confidence digit A (2)"
 	qa2: integer [0..1];
+	@doc "Confidence digit A (1)"
 	qa1: integer [0..1];
+	@doc "Confidence digit B (4)"
 	qb4: integer [0..1];
+	@doc "Confidence digit B (2)"
 	qb2: integer [0..1];
+	@doc "Confidence digit B (1)"
 	qb1: integer [0..1];
+	@doc "Confidence digit C (4)"
 	qc4: integer [0..1];
+	@doc "Confidence digit C (2)"
 	qc2: integer [0..1];
+	@doc "Confidence digit C (1)"
 	qc1: integer [0..1];
+	@doc "Confidence digit D (4)"
 	qd4: integer [0..1];
+	@doc "Confidence digit D (2)"
 	qd2: integer [0..1];
+	@doc "Confidence digit D (1)"
 	qd1: integer [0..1];
 }
 
 type FlightLevel {
+	@doc "Valid / invalid"
 	v: integer [0..1];
+	@doc "Garbled"
 	g: integer [0..1];
+	@doc "Flight level value (1/4 FL)"
 	fl: integer [0..16383];
 }
 
 type ModeCCodeConfidence {
+	@doc "Valid (0=invalid, 1=valid)"
 	v: integer [0..1];
+	@doc "Garbled"
 	g: integer [0..1];
+	@doc "Mode C code (12 bits, altitude)"
 	modec: integer [0..4095];
+	@doc "Confidence digit C (1)"
 	qc1: integer [0..1];
+	@doc "Confidence digit A (1)"
 	qa1: integer [0..1];
+	@doc "Confidence digit C (2)"
 	qc2: integer [0..1];
+	@doc "Confidence digit A (2)"
 	qa2: integer [0..1];
+	@doc "Confidence digit C (4)"
 	qc4: integer [0..1];
+	@doc "Confidence digit A (4)"
 	qa4: integer [0..1];
+	@doc "Confidence digit B (1)"
 	qb1: integer [0..1];
+	@doc "Confidence digit D (1)"
 	qd1: integer [0..1];
+	@doc "Confidence digit B (2)"
 	qb2: integer [0..1];
+	@doc "Confidence digit D (2)"
 	qd2: integer [0..1];
+	@doc "Confidence digit B (4)"
 	qb4: integer [0..1];
+	@doc "Confidence digit D (4)"
 	qd4: integer [0..1];
 }
 
 type TimeOfDay24 {
+	@doc "Time of day in 1/128 seconds from midnight"
 	tod: integer [0..16777215] quantum "1/128 s";
 }
 
 type TrackNumber {
+	@doc "Track number (0–4095)"
 	trn: integer [0..4095];
 }
 
 type TrackStatus001 {
+	@doc "Confirmed track"
 	con: integer [0..1];
+	@doc "Radar plot update"
 	rad: integer [0..1];
+	@doc "Manoeuvre"
 	man: integer [0..1];
+	@doc "Doubtful track"
 	dou: integer [0..1];
+	@doc "RDP chain"
 	rdpc: integer [0..1];
+	@doc "Ghost track"
 	gho: integer [0..1];
 }
 
 type TrackStatus048 {
+	@doc "Confirmed track"
 	cnf: integer [0..1];
+	@doc "Radar plot update (0–3)"
 	rad: integer [0..3];
+	@doc "Doubtful track"
 	dou: integer [0..1];
+	@doc "Manoeuvre"
 	mah: integer [0..1];
+	@doc "Track formation (CDM)"
 	cdm: integer [0..3];
 }
 
 type TrackVelocityPolar {
+	@doc "Ground speed in 2^(-10) NM/s"
 	gsp: integer [0..65535] quantum "2^(-10) NM/s";
+	@doc "Heading in 360/65536 °"
 	hdg: integer [0..65535] quantum "360/65536 °";
 }
 
 type TrackQuality {
+	@doc "Standard deviation in X (sigma)"
 	sigx: integer [0..255];
+	@doc "Standard deviation in Y (sigma)"
 	sigy: integer [0..255];
 }
 
 
 type AircraftAddress048 {
+	@doc "24-bit aircraft address (ICAO)"
 	addr: integer [0..16777215];
 }
 type CommunicationsAcas048 {
+	@doc "Communications capability (COM, 3 bits)"
 	com: integer [0..7];
+	@doc "Status (STAT, 2 bits)"
 	stat: integer [0..3];
+	@doc "Surveillance integrity (SI)"
 	si: integer [0..1];
+	@doc "Mode S specific service capability (MSSC)"
 	mssc: integer [0..1];
+	@doc "Altitude reporting capability (ARC)"
 	arc: integer [0..1];
+	@doc "Aircraft identification capability (AIC)"
 	aic: integer [0..1];
+	@doc "B1A (1 bit)"
 	b1a: integer [0..1];
+	@doc "B1B (3 bits)"
 	b1b: integer [0..7];
 }
 type AircraftIdentification048 {
+	@doc "Aircraft identification (callsign) characters (6-bit each)"
 	chars: sequence of integer;
 }
 type BdsRegisterEntry {
+	@doc "Mode S BDS register data (56 bits / 7 octets)"
 	mbdata: sequence of integer;
+	@doc "BDS 1 (4 bits)"
 	bds1: integer [0..15];
+	@doc "BDS 2 (4 bits)"
 	bds2: integer [0..15];
 }
 
 type DopplerSpeed {
+	@doc "Doppler speed validity (0=invalid, 1=valid)"
 	d: integer [0..1];
+	@doc "Doppler speed (calibrated, signed)"
 	cal: integer [-512..511];
 }
 
 
 type RadarPlotCharacteristics {
+	@doc "Sum of the detected power in range (SRL)"
 	srl: integer? [0..255];
+	@doc "Sum of the detected power in range (SRR)"
 	srr: integer? [0..255];
+	@doc "Amplitude of the plot (SAM)"
 	sam: integer? [-128..127];
+	@doc "Plot amplitude in range (PRL)"
 	prl: integer? [0..255];
+	@doc "Plot amplitude of the plot (PAM)"
 	pam: integer? [-128..127];
+	@doc "Range deviation (RPD)"
 	rpd: integer? [-128..127];
+	@doc "Azimuth deviation (APD)"
 	apd: integer? [-128..127];
 }
 
 type Com034 {
+	@doc "No-go (COM status)"
 	nogo: integer [0..1];
+	@doc "RDP chain 1"
 	rdpc: integer [0..1];
+	@doc "RDP chain 2"
 	rdpr: integer [0..1];
+	@doc "Overload RDP"
 	ovlrdp: integer [0..1];
+	@doc "Overload XMT"
 	ovlxmt: integer [0..1];
+	@doc "Mono/stereo channel"
 	msc: integer [0..1];
+	@doc "Time slot validation"
 	tsv: integer [0..1];
 }
 
 type Psr034 {
-	// PSR sensor status (1 octet, bit-coded per EUROCONTROL CAT034)
+	@doc "PSR sensor status (1 octet, bit-coded per EUROCONTROL CAT034 I034/050)"
 	status: integer [0..255];
 }
 type Ssr034 {
-	// SSR sensor status (1 octet, bit-coded per EUROCONTROL CAT034)
+	@doc "SSR sensor status (1 octet, bit-coded per EUROCONTROL CAT034 I034/050)"
 	status: integer [0..255];
 }
 type Mds034 {
-	// Mode S specific status: octet 1 (ANT, CHAB, OVLSUR, MSC, SCF, DLF, OVLSCF) + octet 2 (OVLDLF, spare)
+	@doc "Antenna (0=main, 1=auxiliary)"
 	ant: integer [0..1];
+	@doc "Channel A/B (0–3)"
 	chab: integer [0..3];
+	@doc "Overload surveillance"
 	ovlsur: integer [0..1];
+	@doc "Mono/stereo channel"
 	msc: integer [0..1];
+	@doc "Split channel function"
 	scf: integer [0..1];
+	@doc "Diversity channel lockout failure"
 	dlf: integer [0..1];
+	@doc "Overload split channel function"
 	ovlscf: integer [0..1];
+	@doc "Overload diversity channel lockout"
 	ovldlf: integer [0..1];
 }
 type SystemConfig034 {
+	@doc "COM (communications) sensor status"
 	com: Com034?;
+	@doc "PSR (primary surveillance radar) sensor status"
 	psr: Psr034?;
+	@doc "SSR (secondary surveillance radar) sensor status"
 	ssr: Ssr034?;
+	@doc "MDS (Mode S) sensor status"
 	mds: Mds034?;
 }
 
 type RdpXmt034 {
+	@doc "Redundancy RDP channel (0–7)"
 	redrdp: integer [0..7];
+	@doc "Redundancy XMT channel (0–7)"
 	redxmt: integer [0..7];
 }
 type SystemProcessingMode034 {
+	@doc "RDP/XMT processing mode (redundancy)"
 	rdpxmt: RdpXmt034?;
 }
 
 type MessageCountEntry {
+	@doc "Message type code"
 	typ: integer [0..31];
+	@doc "Count"
 	count: integer [0..2047];
 }
 
 type CollimationError {
+	@doc "Range error (1/256 NM)"
 	rng: integer [-128..127] quantum "1/256 NM";
+	@doc "Azimuth error (360/65536 °)"
 	azm: integer [-128..127] quantum "360/65536 °";
 }
 
 type PolarWindow {
+	@doc "Range start (1/256 NM)"
 	rhost: integer [0..65535] quantum "1/256 NM";
+	@doc "Range end (1/256 NM)"
 	rhoend: integer [0..65535] quantum "1/256 NM";
+	@doc "Azimuth start (360/65536 °)"
 	thetast: integer [0..65535] quantum "360/65536 °";
+	@doc "Azimuth end (360/65536 °)"
 	thetaend: integer [0..65535] quantum "360/65536 °";
 }
 
 type Position3D {
+	@doc "Height in feet"
 	hgt: integer [-32768..32767] quantum "1 ft";
+	@doc "Latitude (180/2^23 °)"
 	lat: integer [-8388608..8388607] quantum "180/2^23 °";
+	@doc "Longitude (360/2^24 °)"
 	lon: integer [-8388608..8388607] quantum "360/2^24 °";
 }
 
 type PlotCountValue {
+	@doc "Plot/message type code (0–31)"
 	typ: integer [0..31];
+	@doc "Count value"
 	count: integer [0..2047] quantum "1";
 }
 
 type DynamicWindow {
+	@doc "Range start (1/256 NM)"
 	rhost: integer [0..65535] quantum "1/256 NM";
+	@doc "Range end (1/256 NM)"
 	rhoend: integer [0..65535] quantum "1/256 NM";
+	@doc "Azimuth start (360/65536 °)"
 	thetast: integer [0..65535] quantum "360/65536 °";
+	@doc "Azimuth end (360/65536 °)"
 	thetaend: integer [0..65535] quantum "360/65536 °";
 }
 
 
 
 type Cat001Record {
+	@doc "Data Source Identifier (SAC/SIC)"
 	i001_010: DataSourceId?;
+	@doc "Target report descriptor (TYP, SIM, SSR/PSR, etc.)"
 	i001_020: TargetReportDescriptor001?;
+	@doc "Measured position (polar)"
 	i001_040: MeasuredPositionPolar?;
+	@doc "Calculated position (cartesian)"
 	i001_042: CalculatedPositionCartesian?;
+	@doc "Reserved"
 	i001_030: sequence of integer?;
+	@doc "Mode 2 code"
 	i001_050: Mode2Code?;
+	@doc "Mode 3/A code"
 	i001_070: Mode3ACode?;
+	@doc "Mode 3/A confidence"
 	i001_080: Mode3AConfidence?;
+	@doc "Flight level (Mode C)"
 	i001_090: FlightLevel?;
+	@doc "Mode C code and confidence"
 	i001_100: ModeCCodeConfidence?;
+	@doc "Amplitude"
 	i001_120: integer? [0..127];
+	@doc "Reserved"
 	i001_130: sequence of integer?;
+	@doc "Reserved"
 	i001_131: integer? [-128..127];
+	@doc "Reserved"
 	i001_141: integer? [0..65535];
+	@doc "Reserved"
 	i001_161: integer? [0..4095];
+	@doc "Track status (CON, RAD, MAN, etc.)"
 	i001_170: TrackStatus001?;
+	@doc "Track velocity (ground speed, heading)"
 	i001_200: TrackVelocityPolar?;
+	@doc "Reserved"
 	i001_210: sequence of integer?;
 }
 
 type Cat002Record {
+	@doc "Data Source Identifier (SAC/SIC)"
 	i002_010: DataSourceId?;
+	@doc "Message type (North/South Marker, Sector Crossing, etc.)"
 	i002_000: Cat002MessageType?;
+	@doc "Message count or subtype"
 	i002_020: integer? [0..255];
+	@doc "Time of day"
 	i002_030: TimeOfDay24?;
+	@doc "Reserved"
 	i002_041: integer? [0..65535];
+	@doc "Reserved"
 	i002_050: sequence of integer?;
+	@doc "Reserved"
 	i002_060: sequence of integer?;
+	@doc "Plot count values per type"
 	i002_070: sequence of PlotCountValue?;
+	@doc "Dynamic window (sector filter)"
 	i002_100: DynamicWindow?;
+	@doc "Collimation error"
 	i002_090: CollimationError?;
+	@doc "Reserved"
 	i002_080: sequence of integer?;
 }
 
 type Cat034Record {
+	@doc "Data Source Identifier (SAC/SIC)"
 	i034_010: DataSourceId?;
+	@doc "Message type (North Marker, Sector Crossing, etc.)"
 	i034_000: Cat034MessageType?;
+	@doc "Time of day"
 	i034_030: TimeOfDay24?;
-	i034_020: integer? [0..255];
+	@doc "Sector number (azimuth in 360/256 °)"
+	i034_020: integer? [0..255] quantum "360/256 °";
+	@doc "Antenna rotation period in 1/128 s"
 	i034_041: integer? [0..65535] quantum "1/128 s";
+	@doc "System configuration (COM, PSR, SSR, MDS status)"
 	i034_050: SystemConfig034?;
+	@doc "System processing mode (RDP/XMT)"
 	i034_060: SystemProcessingMode034?;
+	@doc "Message count entries per type"
 	i034_070: sequence of MessageCountEntry?;
+	@doc "Polar window (sector filter)"
 	i034_100: PolarWindow?;
+	@doc "Reserved / spare"
 	i034_110: integer? [0..255];
+	@doc "Sensor position (3D)"
 	i034_120: Position3D?;
+	@doc "Collimation error (range/azimuth)"
 	i034_090: CollimationError?;
 }
 
 type Cat048Record {
+	@doc "Data Source Identifier (SAC/SIC)"
 	i048_010: DataSourceId?;
+	@doc "Time of day"
 	i048_140: TimeOfDay24?;
+	@doc "Target report descriptor (TYP, SIM, RDP, SPI, RAB)"
 	i048_020: TargetReportDescriptor048?;
+	@doc "Measured position (polar: range, azimuth)"
 	i048_040: MeasuredPositionPolar?;
+	@doc "Mode 3/A code"
 	i048_070: Mode3ACode?;
+	@doc "Flight level (Mode C)"
 	i048_090: FlightLevel?;
+	@doc "Radar plot characteristics (SRL, SRR, SAM, etc.)"
 	i048_130: RadarPlotCharacteristics?;
+	@doc "Aircraft address (24-bit)"
 	i048_220: AircraftAddress048?;
+	@doc "Aircraft identification (callsign)"
 	i048_240: AircraftIdentification048?;
+	@doc "BDS register entries (Mode S BDS data)"
 	i048_250: sequence of BdsRegisterEntry?;
+	@doc "Track number"
 	i048_161: TrackNumber?;
+	@doc "Calculated position (cartesian)"
 	i048_042: CalculatedPositionCartesian?;
+	@doc "Track velocity (ground speed, heading)"
 	i048_200: TrackVelocityPolar?;
+	@doc "Track status (CNF, RAD, DOU, MAH, CDM)"
 	i048_170: TrackStatus048?;
+	@doc "Track quality (SIGX, SIGY)"
 	i048_210: TrackQuality?;
+	@doc "Reserved expansion"
 	i048_030: sequence of integer?;
+	@doc "Mode 3/A confidence"
 	i048_080: Mode3AConfidence?;
+	@doc "Mode C code and confidence"
 	i048_100: ModeCCodeConfidence?;
+	@doc "Height (barometric altitude)"
 	i048_110: integer? [-32768..32767];
+	@doc "Doppler speed"
 	i048_120: DopplerSpeed?;
+	@doc "Communications/ACAS capability"
 	i048_230: CommunicationsAcas048?;
+	@doc "Reserved expansion"
 	i048_260: sequence of integer?;
+	@doc "Mode 1 code"
 	i048_055: Mode1Code?;
+	@doc "Mode 2 code"
 	i048_050: Mode2Code?;
+	@doc "Mode 1 confidence"
 	i048_065: Mode1Confidence?;
+	@doc "Mode 2 confidence"
 	i048_060: Mode2Confidence?;
+	@doc "Special purpose field"
 	i048_sp: sequence of integer?;
+	@doc "Reserved field"
 	i048_re: sequence of integer?;
 }
 
 type Cat240Record {
+	@doc "Data Source Identifier (SAC/SIC)"
 	i240_010: DataSourceId?;
 }
 
@@ -415,23 +638,41 @@ message Cat001Record {
 	7: i001_080, 8: i001_090, 9: i001_100, 10: i001_120, 11: i001_130, 12: i001_131, 13: i001_141,
 	14: i001_161, 15: i001_170, 16: i001_200, 17: i001_210
 	);
+	@doc "Data Source Identifier (SAC/SIC)"
 	i001_010: optional<DataSourceId>;
+	@doc "Target report descriptor (TYP, SIM, SSR/PSR, etc.)"
 	i001_020: optional<TargetReportDescriptor001>;
+	@doc "Measured position (polar)"
 	i001_040: optional<MeasuredPositionPolar>;
+	@doc "Calculated position (cartesian)"
 	i001_042: optional<CalculatedPositionCartesian>;
+	@doc "Reserved"
 	i001_030: optional<list<u8>>;
+	@doc "Mode 2 code"
 	i001_050: optional<Mode2Code>;
+	@doc "Mode 3/A code"
 	i001_070: optional<Mode3ACode>;
+	@doc "Mode 3/A confidence"
 	i001_080: optional<Mode3AConfidence>;
+	@doc "Flight level (Mode C)"
 	i001_090: optional<FlightLevel>;
+	@doc "Mode C code and confidence"
 	i001_100: optional<ModeCCodeConfidence>;
+	@doc "Amplitude"
 	i001_120: optional<i8> [0..127];
+	@doc "Reserved"
 	i001_130: optional<list<u8>>;
+	@doc "Reserved"
 	i001_131: optional<i8> [-128..127];
+	@doc "Reserved"
 	i001_141: optional<u16> [0..65535];
+	@doc "Reserved"
 	i001_161: optional<u16> [0..4095];
+	@doc "Track status (CON, RAD, MAN, etc.)"
 	i001_170: optional<TrackStatus001>;
+	@doc "Track velocity (ground speed, heading)"
 	i001_200: optional<TrackVelocityPolar>;
+	@doc "Reserved"
 	i001_210: optional<list<u8>>;
 }
 
@@ -442,16 +683,27 @@ message Cat002Record {
 	0: i002_010, 1: i002_000, 2: i002_020, 3: i002_030, 4: i002_041, 5: i002_050, 6: i002_060,
 	7: i002_070, 8: i002_100, 9: i002_090, 10: i002_080
 	);
+	@doc "Data Source Identifier (SAC/SIC)"
 	i002_010: optional<DataSourceId>;
+	@doc "Message type (North/South Marker, Sector Crossing, etc.)"
 	i002_000: optional<u8> [(1, 2, 3, 8, 9)];
+	@doc "Message count or subtype"
 	i002_020: optional<u8> [0..255];
+	@doc "Time of day"
 	i002_030: optional<TimeOfDay24>;
+	@doc "Reserved"
 	i002_041: optional<u16> [0..65535];
+	@doc "Reserved"
 	i002_050: optional<list<u8>>;
+	@doc "Reserved"
 	i002_060: optional<list<u8>>;
+	@doc "Plot count values per type"
 	i002_070: optional<rep_list<PlotCountValue>>;
+	@doc "Dynamic window (sector filter)"
 	i002_100: optional<DynamicWindow>;
+	@doc "Collimation error"
 	i002_090: optional<CollimationError>;
+	@doc "Reserved"
 	i002_080: optional<list<u8>>;
 }
 
@@ -463,17 +715,29 @@ message Cat034Record {
 	0: i034_010, 1: i034_000, 2: i034_030, 3: i034_020, 4: i034_041, 5: i034_050, 6: i034_060,
 	7: i034_070, 8: i034_100, 9: i034_110, 10: i034_120, 11: i034_090
 	);
+	@doc "Data Source Identifier (SAC/SIC)"
 	i034_010: optional<DataSourceId>;
+	@doc "Message type (North Marker, Sector Crossing, etc.)"
 	i034_000: optional<Cat034MessageType>;
+	@doc "Time of day"
 	i034_030: optional<TimeOfDay24>;
-	i034_020: optional<u8> [0..255];
+	@doc "Sector number (azimuth in 360/256 °)"
+	i034_020: optional<u8> [0..255] quantum "360/256 °";
+	@doc "Antenna rotation period in 1/128 s"
 	i034_041: optional<u16> [0..65535] quantum "1/128 s";
+	@doc "System configuration (COM, PSR, SSR, MDS status)"
 	i034_050: optional<SystemConfig034>;
+	@doc "System processing mode (RDP/XMT)"
 	i034_060: optional<SystemProcessingMode034>;
+	@doc "Message count entries per type"
 	i034_070: optional<rep_list<MessageCountEntry>>;
+	@doc "Polar window (sector filter)"
 	i034_100: optional<PolarWindow>;
+	@doc "Reserved / spare"
 	i034_110: optional<u8> [0..255];
+	@doc "Sensor position (3D)"
 	i034_120: optional<Position3D>;
+	@doc "Collimation error (range/azimuth)"
 	i034_090: optional<CollimationError>;
 }
 
@@ -486,39 +750,68 @@ message Cat048Record {
 	14: i048_210, 15: i048_030, 16: i048_080, 17: i048_100, 18: i048_110, 19: i048_120, 20: i048_230,
 	21: i048_260, 22: i048_055, 23: i048_050, 24: i048_065, 25: i048_060, 26: i048_sp, 27: i048_re
 	);
+	@doc "Data Source Identifier (SAC/SIC)"
 	i048_010: optional<DataSourceId>;
+	@doc "Time of day"
 	i048_140: optional<TimeOfDay24>;
+	@doc "Target report descriptor (TYP, SIM, RDP, SPI, RAB)"
 	i048_020: optional<TargetReportDescriptor048>;
+	@doc "Measured position (polar: range, azimuth)"
 	i048_040: optional<MeasuredPositionPolar>;
+	@doc "Mode 3/A code"
 	i048_070: optional<Mode3ACode>;
+	@doc "Flight level (Mode C)"
 	i048_090: optional<FlightLevel>;
+	@doc "Radar plot characteristics (SRL, SRR, SAM, etc.)"
 	i048_130: optional<RadarPlotCharacteristics>;
+	@doc "Aircraft address (24-bit)"
 	i048_220: optional<AircraftAddress048>;
+	@doc "Aircraft identification (callsign)"
 	i048_240: optional<AircraftIdentification048>;
+	@doc "BDS register entries (Mode S BDS data)"
 	i048_250: optional<rep_list<BdsRegisterEntry>>;
+	@doc "Track number"
 	i048_161: optional<TrackNumber>;
+	@doc "Calculated position (cartesian)"
 	i048_042: optional<CalculatedPositionCartesian>;
+	@doc "Track velocity (ground speed, heading)"
 	i048_200: optional<TrackVelocityPolar>;
+	@doc "Track status (CNF, RAD, DOU, MAH, CDM)"
 	i048_170: optional<TrackStatus048>;
+	@doc "Track quality (SIGX, SIGY)"
 	i048_210: optional<TrackQuality>;
+	@doc "Reserved expansion"
 	i048_030: optional<octets_fx>;
+	@doc "Mode 3/A confidence"
 	i048_080: optional<Mode3AConfidence>;
+	@doc "Mode C code and confidence"
 	i048_100: optional<ModeCCodeConfidence>;
+	@doc "Height (barometric altitude)"
 	i048_110: optional<i16> [-32768..32767];
+	@doc "Doppler speed"
 	i048_120: optional<DopplerSpeed>;
+	@doc "Communications/ACAS capability"
 	i048_230: optional<CommunicationsAcas048>;
+	@doc "Reserved expansion"
 	i048_260: optional<octets_fx>;
+	@doc "Mode 1 code"
 	i048_055: optional<Mode1Code>;
+	@doc "Mode 2 code"
 	i048_050: optional<Mode2Code>;
+	@doc "Mode 1 confidence"
 	i048_065: optional<Mode1Confidence>;
+	@doc "Mode 2 confidence"
 	i048_060: optional<Mode2Confidence>;
+	@doc "Special purpose field"
 	i048_sp: optional<octets_fx>;
+	@doc "Reserved field"
 	i048_re: optional<octets_fx>;
 }
 
 
 message Cat240Record {
 	fspec: bitmap(7, 7) -> (0: i240_010);
+	@doc "Data Source Identifier (SAC/SIC)"
 	i240_010: optional<DataSourceId>;
 }
 

@@ -163,6 +163,16 @@ let decoded = codec.decode_message("Simple", &bytes).expect("decode");
 let result = frame::decode_frame(&codec, "Simple", &frame_bytes, None).expect("frame");
 ```
 
+### GUI viewer (PCAP + DSL)
+
+An optional EGUI tool lets you load a PCAP file and a DSL file and browse decoded records in a tree view. Build and run with the `gui` feature:
+
+```bash
+cargo run --bin decode_pcap_gui --features gui
+```
+
+Use the path fields and **Browse…** to choose a PCAP and a DSL file, then **Load**. Select a record in the left panel to see its decoded fields in an expandable tree (structs and lists as nodes, scalars with quantum/enum formatting as leaves).
+
 ## Testing
 
 ### Unit and integration tests

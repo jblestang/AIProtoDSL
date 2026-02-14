@@ -38,6 +38,8 @@ pub struct TypeDefField {
     pub constraint: Option<Constraint>,
     /// Resolution/unit per spec (e.g. "1/256 NM").
     pub quantum: Option<String>,
+    /// Optional description from `@doc "..."` (for tooltips in GUI).
+    pub doc: Option<String>,
 }
 
 /// Abstract type (ASN.1-like): describes the logical type, not the wire encoding.
@@ -133,6 +135,8 @@ pub struct MessageField {
     pub condition: Option<Condition>,
     /// Resolution/unit per spec (e.g. "1/256 NM").
     pub quantum: Option<String>,
+    /// Optional description from `@doc "..."` (for tooltips in GUI).
+    pub doc: Option<String>,
     /// Set at resolve: true when constraint saturates the type range (skip range check during validation).
     pub saturating: bool,
 }
@@ -615,6 +619,21 @@ impl ResolvedProtocol {
         if let Some(s) = self.get_struct(container) {
             if let Some(f) = s.fields.iter().find(|f| f.name == field_name) {
                 return f.constraint.as_ref();
+            }
+        }
+        None
+    }
+
+    /// Returns the doc string for a field (from @doc in type or message). Used for GUI tooltips.
+    pub fn field_doc(&self, container: &str, field_name: &str) -> Option<&str> {
+        if let Some(msg) = self.get_message(container) {
+            if let Some(f) = msg.fields.iter().find(|f| f.name == field_name) {
+                return f.doc.as_deref();
+            }
+        }
+        if let Some(t) = self.get_type_def(container) {
+            if let Some(f) = t.fields.iter().find(|f| f.name == field_name) {
+                return f.doc.as_deref();
             }
         }
         None

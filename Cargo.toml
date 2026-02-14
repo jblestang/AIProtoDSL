@@ -12,6 +12,7 @@ categories = ["encoding", "parser-implementations"]
 
 [features]
 default = []
+gui = ["eframe", "rfd"]
 walk_profile = []  # enable to measure time per TypeSpec in walk (reset_walk_profile + get_walk_profile)
 codec_decode_profile = []  # enable to measure time per TypeSpec in decode (reset_decode_profile + get_decode_profile)
 
@@ -22,6 +23,8 @@ thiserror = "1.0"
 anyhow = "1.0"
 byteorder = "1.5"
 pcap-parser = "0.17"
+eframe = { version = "0.29", optional = true }
+rfd = { version = "0.14", optional = true }
 
 [dev-dependencies]
 tempfile = "3.10"
@@ -38,3 +41,8 @@ path = "tests/integration.rs"
 [[test]]
 name = "dsl"
 path = "tests/dsl.rs"
+
+[[bin]]
+name = "decode_pcap_gui"
+path = "src/bin/decode_pcap_gui.rs"
+required-features = ["gui"]

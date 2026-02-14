@@ -165,14 +165,27 @@ fn build_type_def_section(pair: pest::iterators::Pair<Rule>) -> Result<TypeDefSe
     Ok(TypeDefSection { name, fields })
 }
 
+fn parse_doc_tag_content(doc_tag_pair: pest::iterators::Pair<Rule>) -> Result<String, String> {
+    let lit = doc_tag_pair.into_inner().next().ok_or("doc_tag: missing string_literal")?;
+    let s = lit.as_str();
+    if s.starts_with('"') && s.ends_with('"') {
+        let inner = &s[1..s.len() - 1];
+        Ok(inner.replace("\\\"", "\"").replace("\\n", "\n").replace("\\t", "\t"))
+    } else {
+        Ok(s.to_string())
+    }
+}
+
 fn build_type_def_field(pair: pest::iterators::Pair<Rule>) -> Result<TypeDefField, String> {
     let mut name = String::new();
     let mut abstract_type = None;
     let mut optional = false;
     let mut constraint = None;
     let mut quantum = None;
+    let mut doc = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
+            Rule::doc_tag => doc = Some(parse_doc_tag_content(inner)?),
             Rule::ident => {
                 if name.is_empty() {
                     name = inner.as_str().to_string();
@@ -191,6 +204,7 @@ fn build_type_def_field(pair: pest::iterators::Pair<Rule>) -> Result<TypeDefFiel
         optional,
         constraint,
         quantum,
+        doc,
     })
 }
 
@@ -304,13 +318,14 @@ fn build_message(pair: pest::iterators::Pair<Rule>) -> Result<MessageSection, St
 }
 
 fn build_message_field(pair: pest::iterators::Pair<Rule>) -> Result<MessageField, String> {
-    build_generic_field(pair, build_type_spec).map(|(name, type_spec, default, constraint, condition, quantum)| MessageField {
+    build_generic_field(pair, build_type_spec).map(|(name, type_spec, default, constraint, condition, quantum, doc)| MessageField {
         name,
         type_spec,
         default,
         constraint,
         condition,
         quantum,
+        doc,
         saturating: false,
     })
 }
@@ -329,7 +344,7 @@ fn build_struct(pair: pest::iterators::Pair<Rule>) -> Result<StructSection, Stri
 }
 
 fn build_struct_field(pair: pest::iterators::Pair<Rule>) -> Result<StructField, String> {
-    build_generic_field(pair, build_type_spec).map(|(name, type_spec, default, constraint, condition, quantum)| StructField {
+    build_generic_field(pair, build_type_spec).map(|(name, type_spec, default, constraint, condition, quantum, _doc)| StructField {
         name,
         type_spec,
         default,
@@ -342,7 +357,7 @@ fn build_struct_field(pair: pest::iterators::Pair<Rule>) -> Result<StructField, 
 fn build_generic_field<F>(
     pair: pest::iterators::Pair<Rule>,
     type_builder: F,
-) -> Result<(String, TypeSpec, Option<Literal>, Option<Constraint>, Option<Condition>, Option<String>), String>
+) -> Result<(String, TypeSpec, Option<Literal>, Option<Constraint>, Option<Condition>, Option<String>, Option<String>), String>
 where
     F: FnOnce(pest::iterators::Pair<Rule>) -> Result<TypeSpec, String>,
 {
@@ -353,8 +368,10 @@ where
     let mut cond_field = None;
     let mut cond_value = None;
     let mut quantum = None;
+    let mut doc = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
+            Rule::doc_tag => doc = Some(parse_doc_tag_content(inner)?),
             Rule::ident => {
                 if name.is_empty() {
                     name = inner.as_str().to_string();
@@ -377,7 +394,7 @@ where
     }
     let type_spec = type_builder(type_spec_pair.ok_or("Missing type in field")?)?;
     let condition = cond_field.zip(cond_value).map(|(field, value)| Condition { field, value });
-    Ok((name, type_spec, default, constraint, condition, quantum))
+    Ok((name, type_spec, default, constraint, condition, quantum, doc))
 }
 
 fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String> {

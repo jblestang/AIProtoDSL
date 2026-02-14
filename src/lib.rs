@@ -43,6 +43,7 @@
 
 pub mod ast;
 pub mod codec;
+pub mod dump;
 pub mod frame;
 pub mod lint;
 pub mod parser;
@@ -51,7 +52,8 @@ pub mod walk;
 
 pub use ast::{AbstractType, BitmapPresenceMapping, PaddingKind, Protocol, ResolvedProtocol, TypeDefSection, TypeSpec};
 pub use codec::{Codec, CodecError, Endianness, get_decode_profile, reset_decode_profile};
-pub use frame::{decode_frame, FrameDecodeResult};
+pub use dump::{format_scalar_raw, format_scalar_with_quantum, format_seconds_as_tod, parse_quantum, value_summary_line, value_to_dump};
+pub use frame::{decode_frame, DecodedMessage, FrameDecodeResult};
 pub use parser::parse;
 pub use value::Value;
 pub use lint::{lint, LintMessage, LintRule, Severity};

@@ -19,7 +19,8 @@ enum_section       = { "enum" ~ ident ~ "{" ~ enum_variant* ~ "}" }
 enum_variant       = { ident ~ "=" ~ literal ~ ";" }
 
 // --- Abstract data model (ASN.1-like type definitions) ---
-type_def_field = { ident ~ ":" ~ abstract_type_spec ~ type_optional? ~ ("[" ~ constraint ~ "]")? ~ ";" }
+doc_tag = { "@doc" ~ string_literal }
+type_def_field = { doc_tag? ~ ident ~ ":" ~ abstract_type_spec ~ type_optional? ~ ("[" ~ constraint ~ "]")? ~ quantum_spec? ~ ";" }
 type_optional = { "?" }
 abstract_type_spec = { abstract_seq_type | abstract_base_type | ident }
 abstract_seq_type = { "sequence" ~ "of" ~ abstract_type_spec }
@@ -49,7 +50,7 @@ magic_type = { "magic" ~ "(" ~ literal_bytes ~ ")" }
 
 // --- Message body fields ---
 message_field = {
-    ident ~ ":" ~ type_spec ~ ("=" ~ literal)? ~ ("[" ~ constraint ~ "]")? ~ ("if" ~ ident ~ "==" ~ literal)? ~ ";"
+    doc_tag? ~ ident ~ ":" ~ type_spec ~ ("=" ~ literal)? ~ ("[" ~ constraint ~ "]")? ~ quantum_spec? ~ ("if" ~ ident ~ "==" ~ literal)? ~ ";"
 }
 struct_field = {
     ident ~ ":" ~ type_spec ~ ("=" ~ literal)? ~ ("[" ~ constraint ~ "]")? ~ ("if" ~ ident ~ "==" ~ literal)? ~ ";"
