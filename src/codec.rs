@@ -1,9 +1,9 @@
 //! Encode/decode binary packets from protocol definitions.
 //!
-//! Handles base types (with configurable endianness), padding/reserved (zeroed on encode),
+//! Handles base types (with configurable endianness), padding (zeroed on encode),
 //! length_of/count_of, structs, lists, and validation.
 
-use crate::ast::*;
+use crate::ast::{PaddingKind, *};
 use crate::value::Value;
 use byteorder::{BigEndian, ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::collections::HashMap;
@@ -45,14 +45,12 @@ fn type_spec_decode_label(spec: &TypeSpec) -> &'static str {
     match spec {
         TypeSpec::Base(_) => "Base",
         TypeSpec::Padding(_) => "Padding",
-        TypeSpec::Reserved(_) => "Reserved",
         TypeSpec::Bitfield(_) => "Bitfield",
         TypeSpec::SizedInt(_, _) => "SizedInt",
         TypeSpec::LengthOf(_) => "LengthOf",
         TypeSpec::CountOf(_) => "CountOf",
         TypeSpec::PresenceBits(_) => "PresenceBits",
         TypeSpec::BitmapPresence { .. } => "BitmapPresence",
-        TypeSpec::PaddingBits(_) => "PaddingBits",
         TypeSpec::StructRef(_) => "StructRef",
         TypeSpec::Array(_, _) => "Array",
         TypeSpec::List(_) => "List",
@@ -172,15 +170,14 @@ impl Codec {
         match spec {
             TransportTypeSpec::Base(bt) => self.decode_base(r, bt),
             TransportTypeSpec::SizedInt(bt, n) => self.decode_sized_int(r, bt, *n),
-            TransportTypeSpec::Padding(n) => {
-                let mut buf = vec![0u8; *n as usize];
+            TransportTypeSpec::Padding(kind) => {
+                let bytes = match kind {
+                    PaddingKind::Bytes(n) => *n as usize,
+                    PaddingKind::Bits(n) => ((*n as usize) + 7) / 8,
+                };
+                let mut buf = vec![0u8; bytes];
                 r.read_exact(&mut buf)?;
                 Ok(Value::Padding)
-            }
-            TransportTypeSpec::Reserved(n) => {
-                let mut buf = vec![0u8; *n as usize];
-                r.read_exact(&mut buf)?;
-                Ok(Value::Reserved)
             }
             TransportTypeSpec::Bitfield(n) => {
                 let bits = (*n + 7) / 8;
@@ -219,12 +216,12 @@ impl Codec {
         match spec {
             TransportTypeSpec::Base(bt) => self.encode_base(w, bt, v),
             TransportTypeSpec::SizedInt(bt, n) => self.encode_sized_int(w, bt, *n, v),
-            TransportTypeSpec::Padding(n) => {
-                w.write_all(&vec![0u8; *n as usize])?;
-                Ok(())
-            }
-            TransportTypeSpec::Reserved(n) => {
-                w.write_all(&vec![0u8; *n as usize])?;
+            TransportTypeSpec::Padding(kind) => {
+                let bytes = match kind {
+                    PaddingKind::Bytes(n) => *n as usize,
+                    PaddingKind::Bits(n) => ((*n as usize) + 7) / 8,
+                };
+                w.write_all(&vec![0u8; bytes])?;
                 Ok(())
             }
             TransportTypeSpec::Bitfield(n) => {
@@ -346,7 +343,23 @@ impl Codec {
                         self.write_bits(w, ctx, 1, bit as u64)?;
                     }
                 } else {
-                    w.write_all(&bp_bytes)?;
+                    let block_bits = presence_per_block + 1;
+                    if block_bits >= 8 {
+                        w.write_all(&bp_bytes)?;
+                    } else {
+                        for byte in &bp_bytes {
+                            let mut value = (*byte & 1) as u64;
+                            for j in 0..*presence_per_block as usize {
+                                value |= (((*byte >> (7 - j)) & 1) as u64) << (j + 1);
+                            }
+                            self.write_bits(w, ctx, block_bits as u64, value)?;
+                        }
+                        if ctx.bit_write.next_bit != 0 {
+                            w.write_all(&[ctx.bit_write.cur])?;
+                            ctx.bit_write.cur = 0;
+                            ctx.bit_write.next_bit = 0;
+                        }
+                    }
                 }
                 for (bit_j, &idx) in optional_indices.iter().enumerate() {
                     let bit_in_byte = 7 - (bit_j % bits_per_block);
@@ -512,17 +525,17 @@ impl Codec {
                 self.ensure_decode_bit_aligned(ctx)?;
                 self.decode_base(r, bt)
             }
-            TypeSpec::Padding(n) => {
-                self.ensure_decode_bit_aligned(ctx)?;
-                let mut buf = vec![0u8; *n as usize];
-                r.read_exact(&mut buf)?;
-                Ok(Value::Padding)
-            }
-            TypeSpec::Reserved(n) => {
-                self.ensure_decode_bit_aligned(ctx)?;
-                let mut buf = vec![0u8; *n as usize];
-                r.read_exact(&mut buf)?;
-                Ok(Value::Reserved)
+            TypeSpec::Padding(kind) => match kind {
+                PaddingKind::Bytes(n) => {
+                    self.ensure_decode_bit_aligned(ctx)?;
+                    let mut buf = vec![0u8; *n as usize];
+                    r.read_exact(&mut buf)?;
+                    Ok(Value::Padding)
+                }
+                PaddingKind::Bits(n) => {
+                    let _ = self.read_bits(r, ctx, *n)?;
+                    Ok(Value::Padding)
+                }
             }
             TypeSpec::Bitfield(n) => {
                 let v = self.read_bits(r, ctx, *n)?;
@@ -613,26 +626,38 @@ impl Codec {
                     }
                     b
                 } else {
-                    // Blocked: k presence + 1 FX per block; read block_bits until FX=0.
+                    // Blocked: k presence + 1 FX per block. When block_bits >= 8, wire is one byte per block (stored format). When block_bits < 8, consume exactly block_bits per block (LSB first).
                     let mut bytes = Vec::new();
                     let block_bits = (presence_per_block + 1) as u64;
                     let max_blocks = (*total_bits + presence_per_block - 1) / presence_per_block;
+                    let k = *presence_per_block as usize;
                     for _ in 0..max_blocks {
-                        let b = self.read_bits(r, ctx, block_bits)? as u8;
+                        let b = if block_bits >= 8 {
+                            r.read_u8()?
+                        } else {
+                            let b = self.read_bits(r, ctx, block_bits)? as u8;
+                            let mut stored = b & 1;
+                            for j in 0..k {
+                                stored |= ((b >> (j + 1)) & 1) << (7 - j);
+                            }
+                            stored
+                        };
                         bytes.push(b);
-                        if b & 0x01 == 0 {
+                        if b & 0x01 == 0 || bytes.len() >= max_blocks as usize {
                             break;
+                        }
+                    }
+                    if bytes.len() == max_blocks as usize {
+                        if bytes.last().map(|&b| b & 0x01 != 0).unwrap_or(false) {
+                            return Err(CodecError::Validation(
+                                "bitmap presence: last FSPEC byte must have FX=0 (max size reached)".to_string(),
+                            ));
                         }
                     }
                     bytes
                 };
                 ctx.presence_stack.push(PresenceState::BitmapPresence { bytes: bytes.clone(), bit_index: 0, presence_per_block: *presence_per_block });
                 Ok(Value::Bytes(bytes))
-            }
-            TypeSpec::PaddingBits(n) => {
-                // Padding/spare bits: consume bits, ignore value (real-world captures may set FX/extension bits).
-                let _ = self.read_bits(r, ctx, *n)?;
-                Ok(Value::Padding)
             }
             TypeSpec::StructRef(name) => {
                 self.ensure_decode_bit_aligned(ctx)?;
@@ -711,6 +736,7 @@ impl Codec {
                         }
                         PresenceState::BitmapPresence { bytes, bit_index, presence_per_block } => {
                             let bits_per_block = if *presence_per_block == 0 { 8 } else { *presence_per_block as usize };
+                            let wire_shift = |bit_idx: usize| 7 - bit_idx;
                             // At message level (single bitmap presence on stack), use explicit mapping so each optional
                             // reads the correct bit by field name (e.g. UAP order).
                             let use_mapping = presence_stack_len == 1
@@ -724,7 +750,7 @@ impl Codec {
                                         let byte_idx = (bit_pos as usize) / bits_per_block;
                                         let bit_idx = (bit_pos as usize) % bits_per_block;
                                         let b = if byte_idx < bytes.len() {
-                                            (bytes[byte_idx] >> (7 - bit_idx)) & 1
+                                            (bytes[byte_idx] >> wire_shift(bit_idx)) & 1
                                         } else {
                                             0
                                         };
@@ -776,15 +802,15 @@ impl Codec {
                 self.ensure_encode_bit_aligned(ctx)?;
                 self.encode_base(w, bt, v)
             }
-            TypeSpec::Padding(n) => {
-                self.ensure_encode_bit_aligned(ctx)?;
-                w.write_all(&vec![0u8; *n as usize])?;
-                Ok(())
-            }
-            TypeSpec::Reserved(n) => {
-                self.ensure_encode_bit_aligned(ctx)?;
-                w.write_all(&vec![0u8; *n as usize])?;
-                Ok(())
+            TypeSpec::Padding(kind) => match kind {
+                PaddingKind::Bytes(n) => {
+                    self.ensure_encode_bit_aligned(ctx)?;
+                    w.write_all(&vec![0u8; *n as usize])?;
+                    Ok(())
+                }
+                PaddingKind::Bits(n) => {
+                    self.write_bits(w, ctx, *n, 0)
+                }
             }
             TypeSpec::Bitfield(n) => {
                 let val = v.as_u64().unwrap_or(0);
@@ -819,9 +845,6 @@ impl Codec {
             TypeSpec::PresenceBits(_) | TypeSpec::BitmapPresence { .. } => {
                 // Written by encode_message_fields / encode_struct when they see this field and look ahead.
                 Ok(())
-            }
-            TypeSpec::PaddingBits(n) => {
-                self.write_bits(w, ctx, *n, 0)
             }
             TypeSpec::StructRef(name) => {
                 self.ensure_encode_bit_aligned(ctx)?;
@@ -1021,7 +1044,23 @@ impl Codec {
                         self.write_bits(w, ctx, 1, bit as u64)?;
                     }
                 } else {
-                    w.write_all(&bp_bytes)?;
+                    let block_bits = presence_per_block + 1;
+                    if block_bits >= 8 {
+                        w.write_all(&bp_bytes)?;
+                    } else {
+                        for byte in &bp_bytes {
+                            let mut value = (*byte & 1) as u64;
+                            for j in 0..*presence_per_block as usize {
+                                value |= (((*byte >> (7 - j)) & 1) as u64) << (j + 1);
+                            }
+                            self.write_bits(w, ctx, block_bits as u64, value)?;
+                        }
+                        if ctx.bit_write.next_bit != 0 {
+                            w.write_all(&[ctx.bit_write.cur])?;
+                            ctx.bit_write.cur = 0;
+                            ctx.bit_write.next_bit = 0;
+                        }
+                    }
                 }
                 for (bit_j, &idx) in optional_indices.iter().enumerate() {
                     let bit_in_byte = 7 - (bit_j % bits_per_block);
@@ -1114,7 +1153,7 @@ impl Codec {
             TypeSpec::Base(BaseType::Float) => Value::Float(0.0),
             TypeSpec::Base(BaseType::Double) => Value::Double(0.0),
             TypeSpec::Base(_) => Value::U64(0),
-            TypeSpec::Padding(_) | TypeSpec::Reserved(_) | TypeSpec::PaddingBits(_) => Value::Padding,
+            TypeSpec::Padding(_) => Value::Padding,
             TypeSpec::List(_) => Value::List(vec![]),
             TypeSpec::OctetsFx => Value::Bytes(vec![]),
             TypeSpec::StructRef(_) => Value::Struct(HashMap::new()),

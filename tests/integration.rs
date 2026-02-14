@@ -4,7 +4,7 @@ use aiprotodsl::codec::{Codec, Endianness};
 use aiprotodsl::frame;
 use aiprotodsl::lint::{lint, LintRule, Severity};
 use aiprotodsl::walk::{message_extent, validate_message_in_place, zero_padding_reserved_in_place, remove_message_in_place, Endianness as WalkEndianness};
-use aiprotodsl::{parse, AbstractType, ResolvedProtocol, TypeSpec, Value};
+use aiprotodsl::{parse, AbstractType, PaddingKind, ResolvedProtocol, TypeSpec, Value};
 use std::collections::HashMap;
 
 const SIMPLE_PROTO: &str = r#"
@@ -20,7 +20,7 @@ transport {
   magic: magic("PACK");
   version: u8 = 1;
   length: u32;
-  reserved: reserved(2);
+  padding: padding(2);
 }
 
 message Packet {
@@ -215,7 +215,7 @@ fn test_walk_zero_padding_reserved_in_place() {
     let src = r#"
 message WithReserved {
   a: u8;
-  reserved: reserved(2);
+  padding: padding(2);
   b: u16;
 }
 "#;
@@ -322,7 +322,7 @@ fn test_presence_bits_encode_decode() {
 
 const FSPEC_PROTO: &str = r#"
 message FspecRecord {
-  fspec: bitmap_presence(2, 7) -> (0: a, 1: b);
+  fspec: bitmap(2, 7) -> (0: a, 1: b);
   a: optional<u8>;
   b: optional<u16>;
 }
@@ -341,7 +341,7 @@ fn test_fspec_encode_decode() {
     let encoded = codec.encode_message("FspecRecord", &v).expect("encode");
     assert!(encoded.len() >= 2);
     let first_byte = encoded[0];
-    // bitmap_presence(2, 7): 2 presence bits then FX. Two optionals present => bits 7 and 6 set => 0x40
+    // bitmap(2, 7): 2 presence bits then FX. Two optionals present => bits 7 and 6 set => 0x40
     assert_eq!(first_byte & 0x7f, 0x40);
     let decoded = codec.decode_message("FspecRecord", &encoded).expect("decode");
     assert_eq!(decoded.get("a"), Some(&Value::U8(10)));
@@ -359,6 +359,10 @@ fn test_asterix_family_parse() {
     assert!(resolved.get_message("Cat034Record").is_some());
     assert!(resolved.get_message("Cat240Record").is_some());
     assert!(resolved.get_struct("DataSourceId").is_some());
+    // TrackNumber.spare must be bit padding so decode uses 4 bits not 4 bytes
+    let track = resolved.get_struct("TrackNumber").expect("TrackNumber");
+    let spare = track.fields.iter().find(|f| f.name == "spare").expect("spare field");
+    assert!(matches!(&spare.type_spec, TypeSpec::Padding(PaddingKind::Bits(4))), "TrackNumber.spare should be Padding(Bits(4)), got {:?}", spare.type_spec);
 
     // Payload: which messages can follow transport and how to select from category
     let after = resolved.messages_after_transport();
@@ -410,13 +414,13 @@ fn test_asterix_family_parse() {
     assert_eq!(cat002_optionals[10], "i002_080");
 
     // Cat002 bitmap presence mapping
-    let bp002 = resolved.bitmap_presence_mapping_message("Cat002Record").expect("Cat002Record has bitmap_presence");
+    let bp002 = resolved.bitmap_presence_mapping_message("Cat002Record").expect("Cat002Record has bitmap");
     assert_eq!(bp002.optional_fields.len(), 11);
     assert_eq!(bp002.field_for_bit(0), Some("i002_010"));
     assert_eq!(bp002.field_for_bit(7), Some("i002_070"));
 
     // Bitmap presence mapping: link between presence field and the optional fields it governs
-    let bp = resolved.bitmap_presence_mapping_message("Cat048Record").expect("Cat048Record has bitmap_presence");
+    let bp = resolved.bitmap_presence_mapping_message("Cat048Record").expect("Cat048Record has bitmap");
     assert_eq!(bp.presence_field, "fspec");
     assert!(bp.optional_fields.len() > 10);
     assert_eq!(bp.optional_fields[0], "i048_010");
@@ -431,7 +435,7 @@ fn test_asterix_family_parse() {
     assert_eq!(bp.bit_for_field("i048_130"), Some(6));
 }
 
-/// Decode frame 1 CAT048 block (bitmap_presence 0xFD 0xF7 0x02 => I048/130 absent). Verifies mapping is applied so we skip 130 and decode past 161.
+/// Decode frame 1 CAT048 block (bitmap 0xFD 0xF7 0x02 => I048/130 absent). Verifies mapping is applied so we skip 130 and decode past 161.
 #[test]
 fn test_cat048_frame1_130_absent_decode() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/asterix_family.dsl");
@@ -443,7 +447,7 @@ fn test_cat048_frame1_130_absent_decode() {
     // 0xFD 0xF0: 130 absent (bit 6=0); 220,240,250,161 present; 042,200,170 absent (bit 15=0 so no 3rd block).
     // I048/240 = 8×6 bits = 6 bytes; 250 count=0; 161(2). Total 2+14+3+6+1+2 = 28 bytes.
     let payload: Vec<u8> = vec![
-        0xfd, 0xf0,                                                                                     // bitmap_presence (2 bytes)
+        0xfd, 0xf0,                                                                                     // bitmap (2 bytes)
         0x19, 0xc9, 0x35, 0x6d, 0x4d, 0xa0, 0xc5, 0xaf, 0xf1, 0xe0, 0x02, 0x00, 0x05, 0x28,             // 010..090 (14)
         0x3c, 0x66, 0x0c, 0x10, 0xc2, 0x36, 0xd4, 0x18, 0x01, 0x00, 0x07, 0xb9,                       // 220(3),240(6),250(count=0),161(2) (12)
     ];
@@ -534,30 +538,30 @@ fn test_dsl_lint_tabs_and_one_field_per_line() {
     );
 }
 
-/// Nested bitmap_presence structs: message with optional struct, each struct has its own bitmap_presence and optional nested struct, up to depth 5.
+/// Nested bitmap structs: message with optional struct, each struct has its own bitmap and optional nested struct, up to depth 5.
 const NESTED_FSPEC_DEPTH_5: &str = r#"
 message Nest5 {
-  fspec: bitmap_presence(1, 7) -> (0: a);
+  fspec: bitmap(1, 7) -> (0: a);
   a: optional<Level1>;
 }
 struct Level1 {
-  fspec: bitmap_presence(1, 7) -> (0: b);
+  fspec: bitmap(1, 7) -> (0: b);
   b: optional<Level2>;
 }
 struct Level2 {
-  fspec: bitmap_presence(1, 7) -> (0: c);
+  fspec: bitmap(1, 7) -> (0: c);
   c: optional<Level3>;
 }
 struct Level3 {
-  fspec: bitmap_presence(1, 7) -> (0: d);
+  fspec: bitmap(1, 7) -> (0: d);
   d: optional<Level4>;
 }
 struct Level4 {
-  fspec: bitmap_presence(1, 7) -> (0: e);
+  fspec: bitmap(1, 7) -> (0: e);
   e: optional<Level5>;
 }
 struct Level5 {
-  fspec: bitmap_presence(1, 7) -> (0: v);
+  fspec: bitmap(1, 7) -> (0: v);
   v: optional<u8> [0..255];
 }
 "#;

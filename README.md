@@ -6,7 +6,7 @@ A **DSL (Domain Specific Language)** for defining binary protocol encodings, wit
 
 The protocol is organized in three layers:
 
-1. **Transport** — Optional frame/header (magic bytes, version, length, padding, reserved).
+1. **Transport** — Optional frame/header (magic bytes, version, length, padding).
 2. **Messages** — Named message types with fields (the main payload).
 3. **Structs** — Reusable compound types referenced by messages or other structs.
 
@@ -20,7 +20,6 @@ transport {
   version: u8 = 1;
   length: u32;
   padding: padding(2);
-  reserved: reserved(4);
 }
 ```
 
@@ -48,17 +47,15 @@ struct Header {
 | `u8`, `u16`, `u32`, `u64` | Unsigned integers |
 | `i8`, `i16`, `i32`, `i64` | Signed integers |
 | `bool`, `float`, `double` | Primitives |
-| `padding(n)` | `n` bytes of padding (zeroed on encode) |
-| `reserved(n)` | `n` reserved bytes (zeroed on encode) |
+| `padding(n)` / `padding_bits(n)` | Padding: `n` bytes or `n` bits (zeroed on encode) |
 | `bitfield(n)` | `n` bits (bit mask / flags) |
 | `u8(n)` … `i64(n)` | Integer in `n` bits (e.g. `u16(14)`, `i16(10)`); use when the value is an integer, not a bit mask |
 | `length_of(field)` | Value is length of another field |
 | `count_of(field)` | Value is count of another field |
-| `presence_bits(n)` | ASN.1-style bitmap: `n` bytes (1, 2, or 4); following optional fields use bits 0, 1, 2, … |
-| `fspec` | ASTERIX FSPEC: variable-length bytes until FX=0; 7 presence bits per byte; following optionals use bits 0,1,2,… |
-| `padding_bits(n)` | `n` spare/reserved bits (zeroed on encode) |
+| `presence_bits(n)` | Bitmap: `n` bytes (1, 2, or 4); following optional fields use bits 0, 1, 2, … |
+| `bitmap(...)` | Bitmap (e.g. variable-length until FX=0; 7 presence bits per byte); following optionals use bitmap bits |
 | `list<T>` | Count-prefixed list (count as u32, then elements) |
-| `optional<T>` | Presence byte; or after `presence_bits(n)`/`fspec`, bit in bitmap (no byte) |
+| `optional<T>` | Presence byte; or after a bitmap, bit in bitmap (no byte) |
 | `T[n]` | Array (fixed length or `n` from another field) |
 | Struct name | Reference to a defined `struct` |
 
@@ -71,9 +68,9 @@ struct Header {
 
 - `if field_name == value` — field is only present when the given field equals the value.
 
-### Presence bits (ASN.1-style bitmap)
+### Bitmap (presence for optionals)
 
-Use `presence_bits(n)` with `n` = 1, 2, or 4 bytes. The next **consecutive** optional fields (until a non-optional field) use bits 0, 1, 2, … of that bitmap instead of a per-field presence byte. Bit set = field present. Example:
+Use `presence_bits(n)` with `n` = 1, 2, or 4 bytes, or `bitmap(...)` for variable-length. The next **consecutive** optional fields (until a non-optional field) use bits 0, 1, 2, … of that bitmap instead of a per-field presence byte. Bit set = field present. Example:
 
 ```text
 message WithPresence {
@@ -104,15 +101,15 @@ payload {
 - **`selector`** — optional: transport field name and value→message mapping. At decode time, decode the transport, then use `ResolvedProtocol::message_for_transport_values(transport_values)` to get the message name; use `messages_after_transport()` to get the allowed set.
 - **`repeated`** — optional: when present, the payload is a **list of records** (zero or more messages of the selected type per data block). Use for protocols like ASTERIX where each data block (category + length) contains multiple records of the same category.
 
-### ASTERIX FSPEC and family example
+### ASTERIX and family example
 
-Use `fspec` for ASTERIX-style records: variable-length FSPEC bytes (7 presence bits per byte, bit 7 = FX extension). The next consecutive optional fields use bits 0, 1, 2, … from the FSPEC. **Mapping:** after resolve, use `ResolvedProtocol::fspec_mapping_message(name)` (or `fspec_mapping_struct(name)`) to get the explicit mapping: the FSPEC field name, the list of optional field names in bit order, and **`bit_to_field: Vec<(u32, String)>`** (FSPEC bit position → field name). Use **`field_for_bit(bit)`** and **`bit_for_field(field_name)`** on `FspecMapping` for lookups. See **`examples/asterix_family.dsl`** for a model of the ASTERIX CAT 001, 002, 034, 048, and 240 family (data block = category + length; **payload is a list of records** per block, with `repeated;` and selector mapping `category` to record type).
+Use `bitmap(...)` for ASTERIX-style records: variable-length bitmap bytes (e.g. 7 presence bits per byte, bit 7 = FX extension). The next consecutive optional fields use bits 0, 1, 2, … from the bitmap. **Mapping:** after resolve, use `ResolvedProtocol::bitmap_presence_mapping_message(name)` (or `bitmap_presence_mapping_struct(name)`) to get the optional field list and bit→field mapping. See **`examples/asterix_family.dsl`** for a model of the ASTERIX CAT 001, 002, 034, 048, and 240 family (data block = category + length; **payload is a list of records** per block, with `repeated;` and selector mapping `category` to record type).
 
 ## Codec
 
 - **Endianness:** Configurable (big/little) for multi-byte types.
 - **Validation:** Range and enum constraints are checked on decode; invalid messages can be reported and skipped in frame mode.
-- **Padding/Reserved:** Always written as zero on encode.
+- **Padding:** Padding and padding_bits are always written as zero on encode.
 
 ## Zero-copy walk (no decode/encode)
 
@@ -120,10 +117,10 @@ For performance-sensitive paths you can **walk the binary in place** without dec
 
 - **Message extent** — `message_extent(data, start, resolved, endianness, message_name)` returns the byte length of one message by walking the structure (no allocation).
 - **Validate in place** — `validate_message_in_place(...)` checks constraints (range/enum) with minimal reads; no `Value` allocation.
-- **Zero padding/reserved in place** — `zero_padding_reserved_in_place(buffer, ...)` writes 0 for all padding/reserved fields in the message.
+- **Zero padding in place** — `zero_padding_reserved_in_place(buffer, ...)` writes 0 for all padding and padding_bits fields in the message.
 - **Remove message in place** — `remove_message_in_place(buffer, start, len)` shifts bytes so the message at `[start..start+len]` is removed; returns the new length (caller should truncate the buffer). Use `write_u32_in_place` to update a frame length or count field after removal.
 
-Use the **walk** API when you need to sanitize buffers (zero reserved), skip or drop invalid messages without decoding, or compute message boundaries for framing — without the cost of full decode/encode.
+Use the **walk** API when you need to sanitize buffers (zero padding), skip or drop invalid messages without decoding, or compute message boundaries for framing — without the cost of full decode/encode.
 
 ## Frame handling
 

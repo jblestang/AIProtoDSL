@@ -102,12 +102,18 @@ pub struct TransportField {
     pub quantum: Option<String>,
 }
 
+/// Byte or bit padding (zero on encode).
+#[derive(Debug, Clone, PartialEq)]
+pub enum PaddingKind {
+    Bytes(u64),
+    Bits(u64),
+}
+
 #[derive(Debug, Clone)]
 pub enum TransportTypeSpec {
     Base(BaseType),
     SizedInt(BaseType, u64),
-    Padding(u64),
-    Reserved(u64),
+    Padding(PaddingKind),
     Bitfield(u64),
     Magic(Vec<u8>),
 }
@@ -160,19 +166,17 @@ pub enum TypeSpec {
     Base(BaseType),
     /// Integer stored in n bits; use u16(14), i16(10) etc. when the value is an integer (not a bit mask).
     SizedInt(BaseType, u64),
-    Padding(u64),
-    Reserved(u64),
+    /// Padding: bytes or bits (zero on encode). Use padding(n) or padding(n, bits) in DSL.
+    Padding(PaddingKind),
     Bitfield(u64),
     LengthOf(String),
     CountOf(String),
     /// ASN.1-style presence bitmap: n bytes (1, 2, or 4). Following optional fields use bits 0, 1, 2, ...
     PresenceBits(u64),
-    /// Bitmap presence: bitmap_presence(total_bits, presence_per_block). total_bits = number of presence bits (optionals).
+    /// Bitmap: bitmap(total_bits, presence_per_block). total_bits = number of presence bits (optionals).
     /// presence_per_block = 0 => no FX (consecutive bits); k > 0 => blocks of k presence + 1 FX (FX=0 on last block).
     /// Mapping lists (logical_index, field_name); FX is not a mapped field.
     BitmapPresence { total_bits: u32, presence_per_block: u32, mapping: Vec<(u32, String)> },
-    /// Spare/reserved bits (zero on encode).
-    PaddingBits(u64),
     StructRef(String),
     Array(Box<TypeSpec>, ArrayLen),
     List(Box<TypeSpec>),
@@ -395,10 +399,10 @@ impl Literal {
     }
 }
 
-/// Mapping from a bitmap presence field to the optional fields it governs (bit 0 = first, bit 1 = second, ...).
+/// Mapping from a bitmap field to the optional fields it governs (bit 0 = first, bit 1 = second, ...).
 #[derive(Debug, Clone)]
 pub struct BitmapPresenceMapping {
-    /// Name of the field with type `bitmap_presence`.
+    /// Name of the field with type `bitmap`.
     pub presence_field: String,
     /// Names of the optional fields that follow, in bit order.
     pub optional_fields: Vec<String>,

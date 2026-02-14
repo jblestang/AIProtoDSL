@@ -19,9 +19,8 @@ pub enum Value {
     Bytes(Vec<u8>),
     Struct(HashMap<String, Value>),
     List(Vec<Value>),
-    /// Padding/reserved: must be zero on encode.
+    /// Padding (bytes or bits): must be zero on encode.
     Padding,
-    Reserved,
 }
 
 impl Value {

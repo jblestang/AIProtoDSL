@@ -6,7 +6,7 @@
 //!
 //! ## DSL structure
 //!
-//! - **Transport**: optional frame/header (magic, version, length, padding, reserved)
+//! - **Transport**: optional frame/header (magic, version, length, padding)
 //! - **Payload**: optional; which messages can follow the transport and how to select message type from a transport field (`messages`, `selector`)
 //! - **Messages**: named message types with fields
 //! - **Structs**: reusable compound types
@@ -14,7 +14,7 @@
 //! ## Field types
 //!
 //! - Base: `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`, `i64`, `bool`, `float`, `double`
-//! - `padding(n)`, `reserved(n)`, `bitfield(n)` (encoder zeroes padding/reserved)
+//! - `padding(n)` / `padding(n, bits)`, `bitfield(n)` (encoder zeroes padding)
 //! - Sized int: `u8(n)` … `i64(n)` for integers in n bits (e.g. `u16(14)`, `i16(10)`)
 //! - `length_of(field)`, `count_of(field)` for length/count fields
 //! - Struct references, `list<T>`, `optional<T>`, `T[n]` (fixed or count-based)
@@ -49,7 +49,7 @@ pub mod parser;
 pub mod value;
 pub mod walk;
 
-pub use ast::{AbstractType, BitmapPresenceMapping, Protocol, ResolvedProtocol, TypeDefSection, TypeSpec};
+pub use ast::{AbstractType, BitmapPresenceMapping, PaddingKind, Protocol, ResolvedProtocol, TypeDefSection, TypeSpec};
 pub use codec::{Codec, CodecError, Endianness, get_decode_profile, reset_decode_profile};
 pub use frame::{decode_frame, FrameDecodeResult};
 pub use parser::parse;

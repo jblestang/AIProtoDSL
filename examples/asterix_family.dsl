@@ -410,7 +410,7 @@ type Cat240Record {
 
 // Messages: one per ASTERIX record type; FSPEC and optional items per spec.
 message Cat001Record {
-	fspec: bitmap_presence(24, 7) -> (
+	fspec: bitmap(24, 7) -> (
 	0: i001_010, 1: i001_020, 2: i001_040, 3: i001_042, 4: i001_030, 5: i001_050, 6: i001_070,
 	7: i001_080, 8: i001_090, 9: i001_100, 10: i001_120, 11: i001_130, 12: i001_131, 13: i001_141,
 	14: i001_161, 15: i001_170, 16: i001_200, 17: i001_210
@@ -438,7 +438,7 @@ message Cat001Record {
 
 
 message Cat002Record {
-	fspec: bitmap_presence(14, 7) -> (
+	fspec: bitmap(14, 7) -> (
 	0: i002_010, 1: i002_000, 2: i002_020, 3: i002_030, 4: i002_041, 5: i002_050, 6: i002_060,
 	7: i002_070, 8: i002_100, 9: i002_090, 10: i002_080
 	);
@@ -459,7 +459,7 @@ message Cat002Record {
 
 
 message Cat034Record {
-	fspec: bitmap_presence(14, 7) -> (
+	fspec: bitmap(14, 7) -> (
 	0: i034_010, 1: i034_000, 2: i034_030, 3: i034_020, 4: i034_041, 5: i034_050, 6: i034_060,
 	7: i034_070, 8: i034_100, 9: i034_110, 10: i034_120, 11: i034_090
 	);
@@ -480,7 +480,7 @@ message Cat034Record {
 
 
 message Cat048Record {
-	fspec: bitmap_presence(28, 7) -> (
+	fspec: bitmap(28, 7) -> (
 	0: i048_010, 1: i048_140, 2: i048_020, 3: i048_040, 4: i048_070, 5: i048_090, 6: i048_130,
 	7: i048_220, 8: i048_240, 9: i048_250, 10: i048_161, 11: i048_042, 12: i048_200, 13: i048_170,
 	14: i048_210, 15: i048_030, 16: i048_080, 17: i048_100, 18: i048_110, 19: i048_120, 20: i048_230,
@@ -518,7 +518,7 @@ message Cat048Record {
 
 
 message Cat240Record {
-	fspec: bitmap_presence(7, 7) -> (0: i240_010);
+	fspec: bitmap(7, 7) -> (0: i240_010);
 	i240_010: optional<DataSourceId>;
 }
 
@@ -537,7 +537,7 @@ struct TargetReportDescriptor001 {
 	ant: bitfield(1) [0..1];
 	spi: bitfield(1) [0..1];
 	rab: bitfield(1) [0..1];
-	spare: padding_bits(1);
+	spare: padding(1, bits);
 }
 
 struct TargetReportDescriptor048 {
@@ -546,7 +546,7 @@ struct TargetReportDescriptor048 {
 	rdp: bitfield(1) [0..1];
 	spi: bitfield(1) [0..1];
 	rab: bitfield(1) [0..1];
-	spare_fx: padding_bits(1);
+	spare_fx: padding(1, bits);
 }
 
 struct TargetReportDescriptor048Ext {
@@ -556,7 +556,7 @@ struct TargetReportDescriptor048Ext {
 	me: bitfield(1) [0..1];
 	mi: bitfield(1) [0..1];
 	foefri: bitfield(2) [0..3];
-	spare_fx2: padding_bits(1);
+	spare_fx2: padding(1, bits);
 }
 
 struct MeasuredPositionPolar {
@@ -573,7 +573,7 @@ struct Mode2Code {
 	v: bitfield(1) [0..1];
 	g: bitfield(1) [0..1];
 	l: bitfield(1) [0..1];
-	spare: padding_bits(1);
+	spare: padding(1, bits);
 	mode2: u16(12) [0..4095];
 }
 
@@ -588,12 +588,12 @@ struct Mode3ACode {
 	v: bitfield(1) [0..1];
 	g: bitfield(1) [0..1];
 	l: bitfield(1) [0..1];
-	spare: padding_bits(1);
+	spare: padding(1, bits);
 	mode3a: u16(12) [0..4095];
 }
 
 struct Mode2Confidence {
-	spare: padding_bits(4);
+	spare: padding(4, bits);
 	qa4: bitfield(1) [0..1];
 	qa2: bitfield(1) [0..1];
 	qa1: bitfield(1) [0..1];
@@ -610,7 +610,7 @@ struct Mode2Confidence {
 }
 
 struct Mode1Confidence {
-	spare: padding_bits(3);
+	spare: padding(3, bits);
 	qa4: bitfield(1) [0..1];
 	qa2: bitfield(1) [0..1];
 	qa1: bitfield(1) [0..1];
@@ -620,7 +620,7 @@ struct Mode1Confidence {
 }
 
 struct Mode3AConfidence {
-	spare: padding_bits(4);
+	spare: padding(4, bits);
 	qa4: bitfield(1) [0..1];
 	qa2: bitfield(1) [0..1];
 	qa1: bitfield(1) [0..1];
@@ -645,9 +645,9 @@ struct FlightLevel {
 struct ModeCCodeConfidence {
 	v: bitfield(1) [0..1];
 	g: bitfield(1) [0..1];
-	spare: padding_bits(2);
+	spare: padding(2, bits);
 	modec: u16(12) [0..4095];
-	spare2: padding_bits(4);
+	spare2: padding(4, bits);
 	qc1: bitfield(1) [0..1];
 	qa1: bitfield(1) [0..1];
 	qc2: bitfield(1) [0..1];
@@ -668,7 +668,7 @@ struct TimeOfDay24 {
 }
 
 struct TrackNumber {
-	spare: padding_bits(4);
+	spare: padding(4, bits);
 	trn: u16(12) [0..4095];
 }
 
@@ -678,9 +678,9 @@ struct TrackStatus001 {
 	man: bitfield(1) [0..1];
 	dou: bitfield(1) [0..1];
 	rdpc: bitfield(1) [0..1];
-	spare: padding_bits(1);
+	spare: padding(1, bits);
 	gho: bitfield(1) [0..1];
-	spare2: padding_bits(1);
+	spare2: padding(1, bits);
 
 }
 
@@ -690,7 +690,7 @@ struct TrackStatus048 {
 	dou: bitfield(1) [0..1];
 	mah: bitfield(1) [0..1];
 	cdm: bitfield(2) [0..3];
-	fspec: bitmap_presence(1, 0) -> (0: ext);
+	fspec: bitmap(1, 0) -> (0: ext);
 	ext: optional<TrackStatus048Ext>;
 }
 
@@ -699,8 +699,8 @@ struct TrackStatus048Ext {
 	gho: bitfield(1) [0..1];
 	sup: bitfield(1) [0..1];
 	tcc: bitfield(1) [0..1];
-	spare: padding_bits(3);
-	spare2: padding_bits(1);
+	spare: padding(3, bits);
+	spare2: padding(1, bits);
 
 }
 
@@ -724,12 +724,12 @@ struct CommunicationsAcas048 {
 	stat: bitfield(2) [0..3];
 	si: bitfield(1) [0..1];
 	mssc: bitfield(1) [0..1];
-	spare: padding_bits(1);
+	spare: padding(1, bits);
 	arc: bitfield(1) [0..1];
 	aic: bitfield(1) [0..1];
 	b1a: bitfield(1) [0..1];
 	b1b: bitfield(3) [0..7];
-	spare2: padding_bits(2);
+	spare2: padding(2, bits);
 }
 
 struct AircraftIdentification048 {
@@ -757,13 +757,13 @@ struct BdsRegisterEntry {
 
 struct DopplerSpeed {
 	d: bitfield(1) [0..1];
-	spare: padding_bits(5);
+	spare: padding(5, bits);
 	cal: i16(10) [-512..511];
 }
 
 
 struct RadarPlotCharacteristics {
-	fspec: bitmap_presence(7, 7) -> (0: srl, 1: srr, 2: sam, 3: prl, 4: pam, 5: rpd, 6: apd);
+	fspec: bitmap(7, 7) -> (0: srl, 1: srr, 2: sam, 3: prl, 4: pam, 5: rpd, 6: apd);
 	srl: optional<u8> [0..255];
 	srr: optional<u8> [0..255];
 	sam: optional<i8> [-128..127];
@@ -782,7 +782,7 @@ struct Com034 {
 	ovlxmt: bitfield(1) [0..1];
 	msc: bitfield(1) [0..1];
 	tsv: bitfield(1) [0..1];
-	spare: padding_bits(1);
+	spare: padding(1, bits);
 }
 
 struct Psr034 {
@@ -804,10 +804,10 @@ struct Mds034 {
 	ovlscf: bitfield(1) [0..1];
 	// Octet 2: OVLDLF(1), spare(7)
 	ovldlf: bitfield(1) [0..1];
-	spare: padding_bits(7);
+	spare: padding(7, bits);
 }
 struct SystemConfig034 {
-	fspec: bitmap_presence(7, 7) -> (0: com, 3: psr, 4: ssr, 5: mds);
+	fspec: bitmap(7, 7) -> (0: com, 3: psr, 4: ssr, 5: mds);
 	com: optional<Com034>;
 	psr: optional<Psr034>;
 	ssr: optional<Ssr034>;
@@ -816,13 +816,13 @@ struct SystemConfig034 {
 
 
 struct RdpXmt034 {
-	spare: padding_bits(1);
+	spare: padding(1, bits);
 	redrdp: u8(3) [0..7];
 	redxmt: u8(3) [0..7];
-	spare2: padding_bits(1);
+	spare2: padding(1, bits);
 }
 struct SystemProcessingMode034 {
-	fspec: bitmap_presence(7, 7) -> (0: rdpxmt);
+	fspec: bitmap(7, 7) -> (0: rdpxmt);
 	rdpxmt: optional<RdpXmt034>;
 }
 

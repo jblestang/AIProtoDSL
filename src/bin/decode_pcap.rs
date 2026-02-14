@@ -51,7 +51,7 @@ fn value_to_dump(v: &Value, indent: usize) -> String {
                 lines.join("\n")
             }
         }
-        Value::Padding | Value::Reserved => format!("{}<padding>", pad),
+        Value::Padding => format!("{}<padding>", pad),
     }
 }
 

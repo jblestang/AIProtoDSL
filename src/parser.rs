@@ -1,6 +1,6 @@
 //! Parse DSL source into AST using PEST.
 
-use crate::ast::*;
+use crate::ast::{PaddingKind, *};
 use pest::Parser;
 use pest_derive::Parser as PestParser;
 
@@ -272,12 +272,10 @@ fn build_transport_type_spec(
             Ok(TransportTypeSpec::SizedInt(bt, n))
         }
         Rule::padding_type => {
-            let n = inner.into_inner().next().and_then(|p| p.as_str().parse().ok()).ok_or("padding(n) needs number")?;
-            Ok(TransportTypeSpec::Padding(n))
-        }
-        Rule::reserved_type => {
-            let n = inner.into_inner().next().and_then(|p| p.as_str().parse().ok()).ok_or("reserved(n) needs number")?;
-            Ok(TransportTypeSpec::Reserved(n))
+            let pairs: Vec<_> = inner.into_inner().collect();
+            let n = pairs.iter().find(|p| p.as_rule() == Rule::num).and_then(|p| p.as_str().parse().ok()).ok_or("padding(n) needs number")?;
+            let bits = pairs.iter().any(|p| p.as_rule() == Rule::padding_bits_suffix);
+            Ok(TransportTypeSpec::Padding(if bits { PaddingKind::Bits(n) } else { PaddingKind::Bytes(n) }))
         }
         Rule::bitfield_type => {
             let n = inner.into_inner().next().and_then(|p| p.as_str().parse().ok()).ok_or("bitfield(n) needs number")?;
@@ -394,12 +392,10 @@ fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String
             Ok(TypeSpec::SizedInt(bt, n))
         }
         Rule::padding_type => {
-            let n = inner.into_inner().next().and_then(|p| p.as_str().parse().ok()).ok_or("padding(n)")?;
-            Ok(TypeSpec::Padding(n))
-        }
-        Rule::reserved_type => {
-            let n = inner.into_inner().next().and_then(|p| p.as_str().parse().ok()).ok_or("reserved(n)")?;
-            Ok(TypeSpec::Reserved(n))
+            let pairs: Vec<_> = inner.into_inner().collect();
+            let n = pairs.iter().find(|p| p.as_rule() == Rule::num).and_then(|p| p.as_str().parse().ok()).ok_or("padding(n)")?;
+            let bits = pairs.iter().any(|p| p.as_rule() == Rule::padding_bits_suffix);
+            Ok(TypeSpec::Padding(if bits { PaddingKind::Bits(n) } else { PaddingKind::Bytes(n) }))
         }
         Rule::bitfield_type => {
             let n = inner.into_inner().next().and_then(|p| p.as_str().parse().ok()).ok_or("bitfield(n)")?;
@@ -420,26 +416,26 @@ fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String
             }
             Ok(TypeSpec::PresenceBits(n))
         }
-        Rule::bitmap_presence_type => {
+        Rule::bitmap_type => {
             let pairs: Vec<_> = inner.into_inner().collect();
             let nums: Vec<u32> = pairs
                 .iter()
-                .find(|p| p.as_rule() == Rule::bitmap_presence_size)
+                .find(|p| p.as_rule() == Rule::bitmap_size)
                 .map(|p| p.clone().into_inner().filter_map(|q| q.as_str().parse().ok()).collect())
                 .unwrap_or_default();
-            let total_bits = nums.get(0).copied().ok_or("bitmap_presence requires (total_bits, presence_per_block)")?;
-            let presence_per_block = nums.get(1).copied().ok_or("bitmap_presence requires (total_bits, presence_per_block)")?;
+            let total_bits = nums.get(0).copied().ok_or("bitmap requires (total_bits, presence_per_block)")?;
+            let presence_per_block = nums.get(1).copied().ok_or("bitmap requires (total_bits, presence_per_block)")?;
             let mapping = pairs
                 .into_iter()
-                .find(|p| p.as_rule() == Rule::bitmap_presence_mapping_list)
+                .find(|p| p.as_rule() == Rule::bitmap_mapping_list)
                 .map(|pair| {
                     let all_entries: Vec<(u32, String)> = pair.into_inner()
-                        .filter(|p| p.as_rule() == Rule::bitmap_presence_bit_mapping)
+                        .filter(|p| p.as_rule() == Rule::bitmap_bit_mapping)
                         .map(|p| {
                             let mut it = p.into_inner();
-                            let num_p = it.next().ok_or("bitmap_presence bit mapping")?;
-                            let ident_p = it.next().ok_or("bitmap_presence bit mapping")?;
-                            let bit = num_p.as_str().parse::<u32>().map_err(|_| "bitmap_presence bit number")?;
+                            let num_p = it.next().ok_or("bitmap bit mapping")?;
+                            let ident_p = it.next().ok_or("bitmap bit mapping")?;
+                            let bit = num_p.as_str().parse::<u32>().map_err(|_| "bitmap bit number")?;
                             let name = ident_p.as_str().to_string();
                             Ok((bit, name))
                         })
@@ -452,7 +448,7 @@ fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String
                         if name == "FX" {
                             if block_bits > 0 && phys_bit % block_bits != block_bits - 1 {
                                 return Err(format!(
-                                    "bitmap_presence mapping: FX at physical bit {} is invalid (must be last bit of each block of {})",
+                                    "bitmap mapping: FX at physical bit {} is invalid (must be last bit of each block of {})",
                                     phys_bit, block_bits
                                 ));
                             }
@@ -470,10 +466,6 @@ fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String
                 presence_per_block,
                 mapping,
             })
-        }
-        Rule::padding_bits_type => {
-            let n = inner.into_inner().next().and_then(|p| p.as_str().parse().ok()).ok_or("padding_bits(n)")?;
-            Ok(TypeSpec::PaddingBits(n))
         }
         Rule::struct_ref_type => Ok(TypeSpec::StructRef(inner.as_str().to_string())),
         Rule::array_type => {
@@ -520,20 +512,14 @@ fn build_type_spec_inner(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, 
             Ok(TypeSpec::SizedInt(bt, n))
         }
         Rule::padding_type => {
-            let n = inner.into_inner().next().and_then(|p| p.as_str().parse().ok()).ok_or("padding")?;
-            Ok(TypeSpec::Padding(n))
-        }
-        Rule::reserved_type => {
-            let n = inner.into_inner().next().and_then(|p| p.as_str().parse().ok()).ok_or("reserved")?;
-            Ok(TypeSpec::Reserved(n))
+            let pairs: Vec<_> = inner.into_inner().collect();
+            let n = pairs.iter().find(|p| p.as_rule() == Rule::num).and_then(|p| p.as_str().parse().ok()).ok_or("padding")?;
+            let bits = pairs.iter().any(|p| p.as_rule() == Rule::padding_bits_suffix);
+            Ok(TypeSpec::Padding(if bits { PaddingKind::Bits(n) } else { PaddingKind::Bytes(n) }))
         }
         Rule::bitfield_type => {
             let n = inner.into_inner().next().and_then(|p| p.as_str().parse().ok()).ok_or("bitfield")?;
             Ok(TypeSpec::Bitfield(n))
-        }
-        Rule::padding_bits_type => {
-            let n = inner.into_inner().next().and_then(|p| p.as_str().parse().ok()).ok_or("padding_bits")?;
-            Ok(TypeSpec::PaddingBits(n))
         }
         Rule::struct_ref_type => Ok(TypeSpec::StructRef(inner.as_str().to_string())),
         Rule::list_type => {

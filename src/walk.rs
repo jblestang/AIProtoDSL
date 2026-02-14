@@ -21,7 +21,7 @@
 //! |----------|--------|
 //! | Get byte length of one message | [`message_extent`] |
 //! | Check constraints without decoding | [`validate_message_in_place`] |
-//! | Zero padding/reserved in a buffer | [`zero_padding_reserved_in_place`] |
+//! | Zero padding in a buffer | [`zero_padding_reserved_in_place`] |
 //! | Remove a message and shift bytes | [`remove_message_in_place`] + [`write_u32_in_place`] |
 //! | Full decode for inspection/display | [codec](crate::codec) |
 //!
@@ -29,7 +29,7 @@
 //!
 //! Optional fields are driven by **presence** state: either a fixed bitmap
 //! ([`presence_bits`](crate::ast::TypeSpec::PresenceBits)), or a
-//! [bitmap_presence](crate::ast::TypeSpec::BitmapPresence) (FSPEC-style). The walker reads
+//! [bitmap](crate::ast::TypeSpec::BitmapPresence) (variable-length presence). The walker reads
 //! presence bits/bytes when it hits a presence field, then uses that state for subsequent
 //! `optional<T>` fields. Numeric values (e.g. from `length_of` / `count_of`) and the current
 //! presence state are kept internally for conditional and repeated fields.
@@ -67,7 +67,7 @@
 //! // n = number of bytes consumed by one Cat048Record
 //! ```
 
-use crate::ast::*;
+use crate::ast::{PaddingKind, *};
 use crate::codec::CodecError;
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use std::collections::HashMap;
@@ -120,7 +120,7 @@ pub struct BinaryWalker<'a> {
 /// Mutable walker: same as [`BinaryWalker`] but operates on `&mut [u8]`.
 ///
 /// Used for in-place edits: [`zero_padding_reserved_message`](BinaryWalkerMut::zero_padding_reserved_message)
-/// zeros all `padding` and `reserved` fields in one message. Skip/validate behaviour matches
+/// zeros all `padding` (bytes and bits) fields in one message. Skip/validate behaviour matches
 /// [`BinaryWalker`].
 pub struct BinaryWalkerMut<'a> {
     data: &'a mut [u8],
@@ -146,6 +146,26 @@ fn read_u8(data: &[u8], pos: &mut usize) -> Result<u8, CodecError> {
     let v = data[*pos];
     *pos += 1;
     Ok(v)
+}
+
+/// Read n bits from data at (pos, bit_pos), LSB first. Returns (value, new_pos, new_bit_pos).
+fn read_bits_walk(data: &[u8], pos: usize, bit_pos: u8, n: u8) -> Result<(u64, usize, u8), CodecError> {
+    let mut pos = pos;
+    let mut bit_pos = bit_pos;
+    let mut value = 0u64;
+    for i in 0..n {
+        if pos >= data.len() {
+            return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+        }
+        let bit = (data[pos] >> bit_pos) & 1;
+        value |= (bit as u64) << i;
+        bit_pos += 1;
+        if bit_pos == 8 {
+            pos += 1;
+            bit_pos = 0;
+        }
+    }
+    Ok((value, pos, bit_pos))
 }
 
 fn read_u32_slice(data: &[u8], pos: usize, endianness: Endianness) -> Result<u32, CodecError> {
@@ -387,10 +407,17 @@ impl<'a> BinaryWalker<'a> {
                 }
                 self.pos += n;
             }
-            TypeSpec::Padding(n) | TypeSpec::Reserved(n) => {
+            TypeSpec::Padding(kind) => {
                 #[cfg(feature = "walk_profile")]
-                let _g = ProfileGuard::new("PaddingReserved");
-                self.pos += *n as usize;
+                let _g = ProfileGuard::new("Padding");
+                let byte_len = match kind {
+                    PaddingKind::Bytes(n) => *n as usize,
+                    PaddingKind::Bits(n) => ((*n + 7) / 8) as usize,
+                };
+                if self.pos + byte_len > self.data.len() {
+                    return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                }
+                self.pos += byte_len;
             }
             TypeSpec::Bitfield(n) | TypeSpec::SizedInt(_, n) => {
                 #[cfg(feature = "walk_profile")]
@@ -428,16 +455,47 @@ impl<'a> BinaryWalker<'a> {
                     bytes.extend_from_slice(&self.data[self.pos..self.pos + max_bytes]);
                     self.pos += max_bytes;
                 } else {
+                    let block_bits = (presence_per_block + 1) as u8;
                     let max_blocks = (*total_bits + presence_per_block - 1) / presence_per_block;
-                    for _ in 0..max_blocks {
-                        if self.pos >= self.data.len() {
-                            return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                    let k = *presence_per_block as usize;
+                    if block_bits >= 8 {
+                        for _ in 0..max_blocks {
+                            if self.pos >= self.data.len() {
+                                return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                            }
+                            let b = self.data[self.pos];
+                            self.pos += 1;
+                            bytes.push(b);
+                            if b & 0x01 == 0 || bytes.len() >= max_blocks as usize {
+                                break;
+                            }
                         }
-                        let b = self.data[self.pos];
-                        self.pos += 1;
-                        bytes.push(b);
-                        if b & 0x01 == 0 || bytes.len() >= max_bytes {
-                            break;
+                    } else {
+                        let mut pos = self.pos;
+                        let mut bit_pos = 0u8;
+                        for _ in 0..max_blocks {
+                            let (b, p, bp) = read_bits_walk(self.data, pos, bit_pos, block_bits)?;
+                            pos = p;
+                            bit_pos = bp;
+                            let mut stored = (b & 1) as u8;
+                            for j in 0..k {
+                                stored |= (((b >> (j + 1)) & 1) as u8) << (7 - j);
+                            }
+                            bytes.push(stored);
+                            if b & 0x01 == 0 || bytes.len() >= max_blocks as usize {
+                                break;
+                            }
+                        }
+                        if bit_pos != 0 {
+                            pos += 1;
+                        }
+                        self.pos = pos;
+                    }
+                    if bytes.len() == max_blocks as usize {
+                        if bytes.last().map(|&b| b & 0x01 != 0).unwrap_or(false) {
+                            return Err(CodecError::Validation(
+                                "bitmap presence: last FSPEC byte must have FX=0 (max size reached)".to_string(),
+                            ));
                         }
                     }
                 }
@@ -446,15 +504,6 @@ impl<'a> BinaryWalker<'a> {
                 } else {
                     WalkPresence::BitmapPresence(bytes, 0, *presence_per_block)
                 };
-            }
-            TypeSpec::PaddingBits(n) => {
-                #[cfg(feature = "walk_profile")]
-                let _g = ProfileGuard::new("PaddingBits");
-                let byte_len = ((*n + 7) / 8) as usize;
-                if self.pos + byte_len > self.data.len() {
-                    return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
-                }
-                self.pos += byte_len;
             }
             TypeSpec::StructRef(name) => {
                 #[cfg(feature = "walk_profile")]
@@ -580,7 +629,7 @@ impl<'a> BinaryWalkerMut<'a> {
         Ok(())
     }
 
-    /// One-pass validate and zero: for each field, validate constrained non-saturating fields and zero padding/reserved; returns bytes consumed.
+    /// One-pass validate and zero: for each field, validate constrained non-saturating fields and zero padding; returns bytes consumed.
     pub fn validate_and_zero_message(&mut self, message_name: &str) -> Result<usize, CodecError> {
         let start = self.pos;
         let msg = self.resolved.get_message(message_name).ok_or_else(|| CodecError::UnknownStruct(message_name.to_string()))?;
@@ -641,13 +690,16 @@ impl<'a> BinaryWalkerMut<'a> {
 
     fn zero_or_skip_type_spec(&mut self, spec: &TypeSpec, field_name: Option<&str>) -> Result<(), CodecError> {
         match spec {
-            TypeSpec::Padding(n) | TypeSpec::Reserved(n) => {
-                let n = *n as usize;
-                if self.pos + n > self.data.len() {
+            TypeSpec::Padding(kind) => {
+                let byte_len = match kind {
+                    PaddingKind::Bytes(n) => *n as usize,
+                    PaddingKind::Bits(n) => ((*n + 7) / 8) as usize,
+                };
+                if self.pos + byte_len > self.data.len() {
                     return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
                 }
-                self.data[self.pos..self.pos + n].fill(0);
-                self.pos += n;
+                self.data[self.pos..self.pos + byte_len].fill(0);
+                self.pos += byte_len;
             }
             TypeSpec::Base(_) | TypeSpec::Bitfield(_) | TypeSpec::SizedInt(_, _) => {
                 self.skip_type_spec(spec, None)?;
@@ -677,16 +729,47 @@ impl<'a> BinaryWalkerMut<'a> {
                     bytes.extend_from_slice(&self.data[self.pos..self.pos + max_bytes]);
                     self.pos += max_bytes;
                 } else {
+                    let block_bits = (presence_per_block + 1) as u8;
                     let max_blocks = (*total_bits + presence_per_block - 1) / presence_per_block;
-                    for _ in 0..max_blocks {
-                        if self.pos >= self.data.len() {
-                            return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                    let k = *presence_per_block as usize;
+                    if block_bits >= 8 {
+                        for _ in 0..max_blocks {
+                            if self.pos >= self.data.len() {
+                                return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                            }
+                            let b = self.data[self.pos];
+                            self.pos += 1;
+                            bytes.push(b);
+                            if b & 0x01 == 0 || bytes.len() >= max_blocks as usize {
+                                break;
+                            }
                         }
-                        let b = self.data[self.pos];
-                        self.pos += 1;
-                        bytes.push(b);
-                        if b & 0x01 == 0 || bytes.len() >= max_bytes {
-                            break;
+                    } else {
+                        let mut pos = self.pos;
+                        let mut bit_pos = 0u8;
+                        for _ in 0..max_blocks {
+                            let (b, p, bp) = read_bits_walk(self.data, pos, bit_pos, block_bits)?;
+                            pos = p;
+                            bit_pos = bp;
+                            let mut stored = (b & 1) as u8;
+                            for j in 0..k {
+                                stored |= (((b >> (j + 1)) & 1) as u8) << (7 - j);
+                            }
+                            bytes.push(stored);
+                            if b & 0x01 == 0 || bytes.len() >= max_blocks as usize {
+                                break;
+                            }
+                        }
+                        if bit_pos != 0 {
+                            pos += 1;
+                        }
+                        self.pos = pos;
+                    }
+                    if bytes.len() == max_blocks as usize {
+                        if bytes.last().map(|&b| b & 0x01 != 0).unwrap_or(false) {
+                            return Err(CodecError::Validation(
+                                "bitmap presence: last FSPEC byte must have FX=0 (max size reached)".to_string(),
+                            ));
                         }
                     }
                 }
@@ -695,14 +778,6 @@ impl<'a> BinaryWalkerMut<'a> {
                 } else {
                     WalkPresence::BitmapPresence(bytes, 0, *presence_per_block)
                 };
-            }
-            TypeSpec::PaddingBits(n) => {
-                let byte_len = ((*n + 7) / 8) as usize;
-                if self.pos + byte_len > self.data.len() {
-                    return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
-                }
-                self.data[self.pos..self.pos + byte_len].fill(0);
-                self.pos += byte_len;
             }
             TypeSpec::StructRef(name) => {
                 let s = self.resolved.get_struct(name).ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
@@ -799,10 +874,17 @@ impl<'a> BinaryWalkerMut<'a> {
                 }
                 self.pos += n;
             }
-            TypeSpec::Padding(n) | TypeSpec::Reserved(n) => {
+            TypeSpec::Padding(kind) => {
                 #[cfg(feature = "walk_profile")]
-                let _g = ProfileGuard::new("PaddingReserved");
-                self.pos += *n as usize;
+                let _g = ProfileGuard::new("Padding");
+                let byte_len = match kind {
+                    PaddingKind::Bytes(n) => *n as usize,
+                    PaddingKind::Bits(n) => ((*n + 7) / 8) as usize,
+                };
+                if self.pos + byte_len > self.data.len() {
+                    return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                }
+                self.pos += byte_len;
             }
             TypeSpec::Bitfield(n) | TypeSpec::SizedInt(_, n) => {
                 #[cfg(feature = "walk_profile")]
@@ -840,16 +922,47 @@ impl<'a> BinaryWalkerMut<'a> {
                     bytes.extend_from_slice(&self.data[self.pos..self.pos + max_bytes]);
                     self.pos += max_bytes;
                 } else {
+                    let block_bits = (presence_per_block + 1) as u8;
                     let max_blocks = (*total_bits + presence_per_block - 1) / presence_per_block;
-                    for _ in 0..max_blocks {
-                        if self.pos >= self.data.len() {
-                            return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                    let k = *presence_per_block as usize;
+                    if block_bits >= 8 {
+                        for _ in 0..max_blocks {
+                            if self.pos >= self.data.len() {
+                                return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                            }
+                            let b = self.data[self.pos];
+                            self.pos += 1;
+                            bytes.push(b);
+                            if b & 0x01 == 0 || bytes.len() >= max_blocks as usize {
+                                break;
+                            }
                         }
-                        let b = self.data[self.pos];
-                        self.pos += 1;
-                        bytes.push(b);
-                        if b & 0x01 == 0 || bytes.len() >= max_bytes {
-                            break;
+                    } else {
+                        let mut pos = self.pos;
+                        let mut bit_pos = 0u8;
+                        for _ in 0..max_blocks {
+                            let (b, p, bp) = read_bits_walk(self.data, pos, bit_pos, block_bits)?;
+                            pos = p;
+                            bit_pos = bp;
+                            let mut stored = (b & 1) as u8;
+                            for j in 0..k {
+                                stored |= (((b >> (j + 1)) & 1) as u8) << (7 - j);
+                            }
+                            bytes.push(stored);
+                            if b & 0x01 == 0 || bytes.len() >= max_blocks as usize {
+                                break;
+                            }
+                        }
+                        if bit_pos != 0 {
+                            pos += 1;
+                        }
+                        self.pos = pos;
+                    }
+                    if bytes.len() == max_blocks as usize {
+                        if bytes.last().map(|&b| b & 0x01 != 0).unwrap_or(false) {
+                            return Err(CodecError::Validation(
+                                "bitmap presence: last FSPEC byte must have FX=0 (max size reached)".to_string(),
+                            ));
                         }
                     }
                 }
@@ -858,13 +971,6 @@ impl<'a> BinaryWalkerMut<'a> {
                 } else {
                     WalkPresence::BitmapPresence(bytes, 0, *presence_per_block)
                 };
-            }
-            TypeSpec::PaddingBits(n) => {
-                let byte_len = ((*n + 7) / 8) as usize;
-                if self.pos + byte_len > self.data.len() {
-                    return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
-                }
-                self.pos += byte_len;
             }
             TypeSpec::StructRef(name) => {
                 let s = self.resolved.get_struct(name).ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
@@ -1003,9 +1109,9 @@ pub fn validate_message_in_place(
     w.validate_message(message_name)
 }
 
-/// Zeros all `padding` and `reserved` fields in the given message range, in place.
+/// Zeros all `padding` (bytes and bits) fields in the given message range, in place.
 ///
-/// Walks the message from `start` and sets every padding/reserved byte to 0. Useful before
+/// Walks the message from `start` and sets every padding byte (or bit span) to 0. Useful before
 /// re-encoding or to sanitise a buffer. No allocation.
 pub fn zero_padding_reserved_in_place(
     data: &mut [u8],
@@ -1018,7 +1124,7 @@ pub fn zero_padding_reserved_in_place(
     w.zero_padding_reserved_message(message_name)
 }
 
-/// One-pass validate and zeroize: walks the message from `start`, validates constrained fields and zeros padding/reserved; returns bytes consumed.
+/// One-pass validate and zeroize: walks the message from `start`, validates constrained fields and zeros padding; returns bytes consumed.
 pub fn validate_and_zero_message_in_place(
     data: &mut [u8],
     start: usize,
