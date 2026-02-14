@@ -92,8 +92,11 @@ fn format_scalar_with_quantum(v: &Value, quantum: Option<&str>) -> String {
         _ => return format_scalar_raw(v),
     };
     let physical = raw * scale;
-    let is_tod_seconds = unit.eq_ignore_ascii_case("s") || unit.eq_ignore_ascii_case("sec");
-    if is_tod_seconds && physical >= 0.0 && physical < 86400.0 * 2.0 {
+    // Only format as HH:MM:SS when value looks like time-of-day (>= 1 hour), not e.g. antenna rotation period in seconds.
+    let is_tod_seconds = (unit.eq_ignore_ascii_case("s") || unit.eq_ignore_ascii_case("sec"))
+        && physical >= 3600.0
+        && physical < 86400.0 * 2.0;
+    if is_tod_seconds && physical >= 0.0 {
         format!("{} ({})", format_seconds_as_tod(physical), format_scalar_raw(v))
     } else if unit.is_empty() {
         format!("{} ({})", physical, format_scalar_raw(v))
@@ -169,7 +172,13 @@ fn value_to_dump(
             let mut keys: Vec<_> = m.keys().collect();
             keys.sort();
             for k in keys {
-                let sub = value_to_dump(resolved, container, k, m.get(k).unwrap(), indent + 1);
+                let val = m.get(k).unwrap();
+                if let Value::List(lst) = val {
+                    if lst.is_empty() {
+                        continue; // optional field not present — do not dump
+                    }
+                }
+                let sub = value_to_dump(resolved, container, k, val, indent + 1);
                 lines.push(format!("  {}: {}", k, sub.trim_start()));
             }
             lines.push(format!("{}}}", pad));
@@ -552,6 +561,11 @@ fn process_udp_payload(
                                         keys.sort();
                                         for k in keys {
                                             let v = msg.values.get(k).unwrap();
+                                            if let Value::List(lst) = v {
+                                                if lst.is_empty() {
+                                                    continue; // optional field not present — do not dump
+                                                }
+                                            }
                                             let txt = value_to_dump(resolved, &msg.name, k, v, 0);
                                             let mut lines = txt.lines();
                                             if let Some(first) = lines.next() {

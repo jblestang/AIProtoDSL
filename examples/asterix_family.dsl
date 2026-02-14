@@ -357,7 +357,7 @@ type Cat034Record {
 	i034_000: Cat034MessageType?;
 	i034_030: TimeOfDay24?;
 	i034_020: integer? [0..255];
-	i034_041: integer? [0..65535];
+	i034_041: integer? [0..65535] quantum "1/128 s";
 	i034_050: SystemConfig034?;
 	i034_060: SystemProcessingMode034?;
 	i034_070: sequence of MessageCountEntry?;
@@ -467,7 +467,7 @@ message Cat034Record {
 	i034_000: optional<Cat034MessageType>;
 	i034_030: optional<TimeOfDay24>;
 	i034_020: optional<u8> [0..255];
-	i034_041: optional<u16> [0..65535];
+	i034_041: optional<u16> [0..65535] quantum "1/128 s";
 	i034_050: optional<SystemConfig034>;
 	i034_060: optional<SystemProcessingMode034>;
 	i034_070: optional<rep_list<MessageCountEntry>>;
