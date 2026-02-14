@@ -45,6 +45,8 @@ pub mod ast;
 pub mod codec;
 pub mod dump;
 pub mod frame;
+#[cfg(feature = "gui")]
+pub mod gui;
 pub mod lint;
 pub mod parser;
 pub mod value;
