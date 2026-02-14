@@ -163,11 +163,49 @@ let decoded = codec.decode_message("Simple", &bytes).expect("decode");
 let result = frame::decode_frame(&codec, "Simple", &frame_bytes, None).expect("frame");
 ```
 
-## Tests
+## Testing
+
+### Unit and integration tests
 
 ```bash
 cargo test
 ```
+
+This runs:
+
+- **Library unit tests** — Lint rules, helpers.
+- **`tests/integration.rs`** — Parse, encode/decode, validation, frame handling, walk API, ASTERIX family parse and decode.
+- **`tests/bitmap_presence.rs`** — Bitmap (FSPEC-style) presence: wire format, encode/decode, roundtrip for `bitmap(2,7)`, `bitmap(14,7)`, `bitmap(28,7)`, `bitmap(14,3)`.
+- **`tests/dsl.rs`** — **DSL unit tests** (syntax and semantics).
+
+### DSL unit tests (`tests/dsl.rs`)
+
+Extensive tests for the DSL:
+
+- **Syntax (parse success):** Minimal message; all base types; comments; transport (including `padding(n, bits)`); payload (messages, selector, repeated); type sections (abstract types); enums; structs and struct refs; range and enum constraints; multi-interval constraints; sized int, bitfield, padding; `length_of` / `count_of`; `presence_bits`; `bitmap` with and without mapping; list, optional, rep_list, octets_fx; conditional fields; quantum spec; default values; selector with `list<Message>`.
+- **Syntax (parse failure):** Empty or malformed input; wrong keyword; unclosed brace; missing semicolon; unknown type (where applicable); invalid `presence_bits(n)` (e.g. n=3); malformed bitmap.
+- **Semantics (resolve):** Minimal resolve; transport and payload; struct ref; type defs.
+- **Semantics (resolve errors):** Duplicate message/struct/type names; payload message undefined; selector message undefined; payload without messages list.
+
+### Parser fuzzing
+
+The parser is fuzz-tested with [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) (libFuzzer) so that **`parse(input)` never panics** on arbitrary UTF-8 input; it returns `Ok(Protocol)` or `Err(String)`.
+
+**Prerequisites:** Nightly Rust, `cargo-fuzz` (`cargo install cargo-fuzz`), and a target that supports libFuzzer (e.g. x86_64 or aarch64 on Linux/macOS).
+
+**Run the parser fuzz target:**
+
+```bash
+cargo fuzz run parser_fuzz
+```
+
+Optional: run for a fixed duration or with a corpus, e.g.:
+
+```bash
+cargo fuzz run parser_fuzz -- -max_total_time=60
+```
+
+The fuzz harness in `fuzz/fuzz_targets/parser_fuzz.rs` feeds valid UTF-8 strings to `aiprotodsl::parse`; invalid UTF-8 is skipped. Add corpus seeds under `fuzz/corpus/parser_fuzz/` (e.g. small valid DSL snippets) to improve coverage.
 
 ## License
 

@@ -1,0 +1,5 @@
+transport {
+  version: u8 = 1;
+  length: u32;
+}
+message P { id: u8; }

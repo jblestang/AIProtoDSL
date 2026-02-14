@@ -34,3 +34,7 @@ harness = false
 [[test]]
 name = "integration"
 path = "tests/integration.rs"
+
+[[test]]
+name = "dsl"
+path = "tests/dsl.rs"

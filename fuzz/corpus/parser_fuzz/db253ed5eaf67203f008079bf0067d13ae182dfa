@@ -1,0 +1,6 @@
+message M {
+  x:message M {
+  x: u;;
+}
+ u;;
+}
