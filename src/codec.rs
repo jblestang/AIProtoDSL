@@ -62,7 +62,10 @@ fn type_spec_decode_label(spec: &TypeSpec) -> &'static str {
 
 impl Codec {
     pub fn new(resolved: ResolvedProtocol, endianness: Endianness) -> Self {
-        Codec { endianness, resolved }
+        Codec {
+            endianness,
+            resolved,
+        }
     }
 
     /// Decode a single message by name from the given bytes.
@@ -71,8 +74,7 @@ impl Codec {
         message_name: &str,
         bytes: &[u8],
     ) -> Result<HashMap<String, Value>, CodecError> {
-        self.decode_message_with_extent(message_name, bytes)
-            .1
+        self.decode_message_with_extent(message_name, bytes).1
     }
 
     /// Decode a single message and return (bytes_consumed, result). Used by frame decoder to skip non-compliant messages.
@@ -88,7 +90,12 @@ impl Codec {
         };
         let mut cursor = Cursor::new(bytes);
         let mut ctx = DecodeContext::default();
-        let values = match self.decode_message_fields_no_validate(&mut cursor, message_name, msg.fields.as_slice(), &mut ctx) {
+        let values = match self.decode_message_fields_no_validate(
+            &mut cursor,
+            message_name,
+            msg.fields.as_slice(),
+            &mut ctx,
+        ) {
             Ok(v) => v,
             Err(e) => return (cursor.position() as usize, Err(e)),
         };
@@ -133,10 +140,7 @@ impl Codec {
     }
 
     /// Encode transport header (padding/reserved zeroed).
-    pub fn encode_transport(
-        &self,
-        values: &HashMap<String, Value>,
-    ) -> Result<Vec<u8>, CodecError> {
+    pub fn encode_transport(&self, values: &HashMap<String, Value>) -> Result<Vec<u8>, CodecError> {
         let transport = match &self.resolved.protocol.transport {
             Some(t) => t,
             None => return Ok(Vec::new()),
@@ -313,9 +317,15 @@ impl Codec {
                 for (bit_j, &idx) in optional_indices.iter().enumerate() {
                     if (bitmap >> bit_j) & 1 != 0 {
                         let o = &fields[idx];
-                        let v = ctx.get(&o.name).cloned().unwrap_or_else(|| self.default_for_type_spec(&o.type_spec));
+                        let v = ctx
+                            .get(&o.name)
+                            .cloned()
+                            .unwrap_or_else(|| self.default_for_type_spec(&o.type_spec));
                         if let TypeSpec::Optional(elem) = &o.type_spec {
-                            let inner = v.as_list().and_then(|l| l.first().cloned()).unwrap_or_else(|| self.default_for_type_spec(elem));
+                            let inner = v
+                                .as_list()
+                                .and_then(|l| l.first().cloned())
+                                .unwrap_or_else(|| self.default_for_type_spec(elem));
                             self.encode_type_spec(w, elem, &inner, structs, ctx)?;
                         }
                     }
@@ -324,22 +334,44 @@ impl Codec {
                 i += 1;
                 continue;
             }
-            if let TypeSpec::BitmapPresence { total_bits, presence_per_block, .. } = &f.type_spec {
+            if let TypeSpec::BitmapPresence {
+                total_bits,
+                presence_per_block,
+                ..
+            } = &f.type_spec
+            {
                 let optional_indices = self.collect_following_optionals_message(fields, i + 1, ctx);
-                let mut bp_bytes = self.build_bitmap_presence_bytes_message(fields, &optional_indices, ctx, *presence_per_block);
-                let max_encoded_bits = if *presence_per_block == 0 { *total_bits } else { ((*total_bits + presence_per_block - 1) / presence_per_block) * (presence_per_block + 1) };
+                let mut bp_bytes = self.build_bitmap_presence_bytes_message(
+                    fields,
+                    &optional_indices,
+                    ctx,
+                    *presence_per_block,
+                );
+                let max_encoded_bits = if *presence_per_block == 0 {
+                    *total_bits
+                } else {
+                    ((*total_bits + presence_per_block - 1) / presence_per_block)
+                        * (presence_per_block + 1)
+                };
                 let max_bytes = ((max_encoded_bits + 7) / 8) as usize;
                 bp_bytes.truncate(max_bytes);
                 if *presence_per_block != 0 && !bp_bytes.is_empty() {
                     let last = bp_bytes.len() - 1;
                     bp_bytes[last] &= 0xFE; // FX (LSB) = 0 on last block
                 }
-                let bits_per_block = if *presence_per_block == 0 { 8 } else { *presence_per_block as usize };
+                let bits_per_block = if *presence_per_block == 0 {
+                    8
+                } else {
+                    *presence_per_block as usize
+                };
                 if *presence_per_block == 0 {
                     for bit_j in 0..*total_bits as usize {
                         let byte_idx = bit_j / 8;
                         let bit_in_byte = 7 - (bit_j % 8);
-                        let bit = bp_bytes.get(byte_idx).map(|&b| (b >> bit_in_byte) & 1).unwrap_or(0);
+                        let bit = bp_bytes
+                            .get(byte_idx)
+                            .map(|&b| (b >> bit_in_byte) & 1)
+                            .unwrap_or(0);
                         self.write_bits(w, ctx, 1, bit as u64)?;
                     }
                 } else {
@@ -363,11 +395,22 @@ impl Codec {
                 }
                 for (bit_j, &idx) in optional_indices.iter().enumerate() {
                     let bit_in_byte = 7 - (bit_j % bits_per_block);
-                    if bp_bytes.get(bit_j / bits_per_block).map(|&b| (b >> bit_in_byte) & 1).unwrap_or(0) != 0 {
+                    if bp_bytes
+                        .get(bit_j / bits_per_block)
+                        .map(|&b| (b >> bit_in_byte) & 1)
+                        .unwrap_or(0)
+                        != 0
+                    {
                         let o = &fields[idx];
-                        let v = ctx.get(&o.name).cloned().unwrap_or_else(|| self.default_for_type_spec(&o.type_spec));
+                        let v = ctx
+                            .get(&o.name)
+                            .cloned()
+                            .unwrap_or_else(|| self.default_for_type_spec(&o.type_spec));
                         if let TypeSpec::Optional(elem) = &o.type_spec {
-                            let inner = v.as_list().and_then(|l| l.first().cloned()).unwrap_or_else(|| self.default_for_type_spec(elem));
+                            let inner = v
+                                .as_list()
+                                .and_then(|l| l.first().cloned())
+                                .unwrap_or_else(|| self.default_for_type_spec(elem));
                             self.encode_type_spec(w, elem, &inner, structs, ctx)?;
                         }
                     }
@@ -376,7 +419,10 @@ impl Codec {
                 i += 1;
                 continue;
             }
-            let v = ctx.get(&f.name).cloned().unwrap_or_else(|| self.default_for_type_spec(&f.type_spec));
+            let v = ctx
+                .get(&f.name)
+                .cloned()
+                .unwrap_or_else(|| self.default_for_type_spec(&f.type_spec));
             self.encode_type_spec(w, &f.type_spec, &v, structs, ctx)?;
             i += 1;
         }
@@ -384,7 +430,12 @@ impl Codec {
         Ok(())
     }
 
-    fn collect_following_optionals_message(&self, fields: &[MessageField], start: usize, ctx: &EncodeContext) -> Vec<usize> {
+    fn collect_following_optionals_message(
+        &self,
+        fields: &[MessageField],
+        start: usize,
+        ctx: &EncodeContext,
+    ) -> Vec<usize> {
         let mut out = Vec::new();
         for j in start..fields.len() {
             let f = &fields[j];
@@ -404,11 +455,18 @@ impl Codec {
         out
     }
 
-    fn build_presence_bitmap_message(&self, fields: &[MessageField], indices: &[usize], ctx: &EncodeContext) -> u64 {
+    fn build_presence_bitmap_message(
+        &self,
+        fields: &[MessageField],
+        indices: &[usize],
+        ctx: &EncodeContext,
+    ) -> u64 {
         let mut bitmap = 0u64;
         for (bit, &idx) in indices.iter().enumerate() {
             let v = ctx.get(&fields[idx].name);
-            let present = v.map(|v| v.as_list().map(|l| !l.is_empty()).unwrap_or(false)).unwrap_or(false);
+            let present = v
+                .map(|v| v.as_list().map(|l| !l.is_empty()).unwrap_or(false))
+                .unwrap_or(false);
             if present {
                 bitmap |= 1 << bit;
             }
@@ -417,14 +475,26 @@ impl Codec {
     }
 
     /// Build bitmap presence bytes: presence_per_block=0 => 8 presence bits per byte (no FX); k>0 => k presence + 1 FX per block.
-    fn build_bitmap_presence_bytes_message(&self, fields: &[MessageField], indices: &[usize], ctx: &EncodeContext, presence_per_block: u32) -> Vec<u8> {
+    fn build_bitmap_presence_bytes_message(
+        &self,
+        fields: &[MessageField],
+        indices: &[usize],
+        ctx: &EncodeContext,
+        presence_per_block: u32,
+    ) -> Vec<u8> {
         let mut bits = Vec::with_capacity(indices.len());
         for &idx in indices {
             let v = ctx.get(&fields[idx].name);
-            let present = v.map(|v| v.as_list().map(|l| !l.is_empty()).unwrap_or(false)).unwrap_or(false);
+            let present = v
+                .map(|v| v.as_list().map(|l| !l.is_empty()).unwrap_or(false))
+                .unwrap_or(false);
             bits.push(present);
         }
-        let per_block = if presence_per_block == 0 { 8 } else { presence_per_block as usize };
+        let per_block = if presence_per_block == 0 {
+            8
+        } else {
+            presence_per_block as usize
+        };
         let mut out = Vec::new();
         for chunk in bits.chunks(per_block) {
             let mut byte = 0u8;
@@ -452,7 +522,11 @@ impl Codec {
             1 => 1,
             2 => 2,
             4 => 4,
-            _ => return Err(CodecError::Validation("presence_bits(n): n must be 1, 2, or 4".to_string())),
+            _ => {
+                return Err(CodecError::Validation(
+                    "presence_bits(n): n must be 1, 2, or 4".to_string(),
+                ))
+            }
         };
         let buf = self.u64_to_bytes(bitmap, len);
         w.write_all(&buf)?;
@@ -469,9 +543,17 @@ impl Codec {
         Ok(())
     }
 
-    fn read_bits(&self, r: &mut Cursor<&[u8]>, ctx: &mut DecodeContext, n: u64) -> Result<u64, CodecError> {
+    fn read_bits(
+        &self,
+        r: &mut Cursor<&[u8]>,
+        ctx: &mut DecodeContext,
+        n: u64,
+    ) -> Result<u64, CodecError> {
         if n > 64 {
-            return Err(CodecError::Validation(format!("bitfield({}): too many bits (max 64)", n)));
+            return Err(CodecError::Validation(format!(
+                "bitfield({}): too many bits (max 64)",
+                n
+            )));
         }
         let mut out = 0u64;
         for i in 0..(n as u8) {
@@ -491,9 +573,18 @@ impl Codec {
         Ok(out)
     }
 
-    fn write_bits(&self, w: &mut Vec<u8>, ctx: &mut EncodeContext, n: u64, mut value: u64) -> Result<(), CodecError> {
+    fn write_bits(
+        &self,
+        w: &mut Vec<u8>,
+        ctx: &mut EncodeContext,
+        n: u64,
+        mut value: u64,
+    ) -> Result<(), CodecError> {
         if n > 64 {
-            return Err(CodecError::Validation(format!("bitfield({}): too many bits (max 64)", n)));
+            return Err(CodecError::Validation(format!(
+                "bitfield({}): too many bits (max 64)",
+                n
+            )));
         }
         for _ in 0..n {
             let bit = (value & 1) as u8;
@@ -536,7 +627,7 @@ impl Codec {
                     let _ = self.read_bits(r, ctx, *n)?;
                     Ok(Value::Padding)
                 }
-            }
+            },
             TypeSpec::Bitfield(n) => {
                 let v = self.read_bits(r, ctx, *n)?;
                 Ok(Value::U64(v))
@@ -592,13 +683,29 @@ impl Codec {
                     1 => r.read_u8()? as u64,
                     2 => self.read_u16(r)? as u64,
                     4 => self.read_u32(r)? as u64,
-                    _ => return Err(CodecError::Validation("presence_bits(n): n must be 1, 2, or 4".to_string())),
+                    _ => {
+                        return Err(CodecError::Validation(
+                            "presence_bits(n): n must be 1, 2, or 4".to_string(),
+                        ))
+                    }
                 };
-                ctx.presence_stack.push(PresenceState::Bitmap { value: bitmap, bit_index: 0 });
+                ctx.presence_stack.push(PresenceState::Bitmap {
+                    value: bitmap,
+                    bit_index: 0,
+                });
                 Ok(Value::U64(bitmap))
             }
-            TypeSpec::BitmapPresence { total_bits, presence_per_block, .. } => {
-                let max_encoded_bits = if *presence_per_block == 0 { *total_bits } else { ((*total_bits + presence_per_block - 1) / presence_per_block) * (presence_per_block + 1) };
+            TypeSpec::BitmapPresence {
+                total_bits,
+                presence_per_block,
+                ..
+            } => {
+                let max_encoded_bits = if *presence_per_block == 0 {
+                    *total_bits
+                } else {
+                    ((*total_bits + presence_per_block - 1) / presence_per_block)
+                        * (presence_per_block + 1)
+                };
                 let max_bytes = ((max_encoded_bits + 7) / 8) as usize;
                 let bytes = if *presence_per_block == 0 && *total_bits == 1 {
                     // Single presence bit in same byte as preceding bitfields: LSB (bit 0) of current byte (e.g. EUROCONTROL I048/170 FX).
@@ -656,14 +763,24 @@ impl Codec {
                     }
                     bytes
                 };
-                ctx.presence_stack.push(PresenceState::BitmapPresence { bytes: bytes.clone(), bit_index: 0, presence_per_block: *presence_per_block });
+                ctx.presence_stack.push(PresenceState::BitmapPresence {
+                    bytes: bytes.clone(),
+                    bit_index: 0,
+                    presence_per_block: *presence_per_block,
+                });
                 Ok(Value::Bytes(bytes))
             }
             TypeSpec::StructRef(name) => {
                 self.ensure_decode_bit_aligned(ctx)?;
                 if let Some(enum_sec) = self.resolved.get_enum(name) {
                     let raw = r.read_u8()? as i64;
-                    let ok = enum_sec.variants.iter().any(|(_, lit)| lit.as_i64() == Some(raw));
+                    let mut ok = false;
+                    for (_, lit) in &enum_sec.variants {
+                        if lit.as_i64() == Some(raw) {
+                            ok = true;
+                            break;
+                        }
+                    }
                     if !ok {
                         return Err(CodecError::Validation(format!(
                             "enum {}: value {} not in allowed set",
@@ -672,7 +789,10 @@ impl Codec {
                     }
                     Ok(Value::U8(raw as u8))
                 } else {
-                    let s = self.resolved.get_struct(name).ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
+                    let s = self
+                        .resolved
+                        .get_struct(name)
+                        .ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
                     self.decode_struct(r, s, structs, ctx)
                 }
             }
@@ -680,7 +800,10 @@ impl Codec {
                 self.ensure_decode_bit_aligned(ctx)?;
                 let n = match len {
                     ArrayLen::Constant(k) => *k,
-                    ArrayLen::FieldRef(field) => ctx.get(field).and_then(Value::as_u64).ok_or_else(|| CodecError::UnknownField(field.clone()))?,
+                    ArrayLen::FieldRef(field) => ctx
+                        .get(field)
+                        .and_then(Value::as_u64)
+                        .ok_or_else(|| CodecError::UnknownField(field.clone()))?,
                 };
                 let mut list = Vec::with_capacity(n as usize);
                 for _ in 0..n {
@@ -702,7 +825,11 @@ impl Codec {
                 let n_raw = self.read_u8(r)? as u64;
                 // Cap by remaining bytes when element has fixed size to avoid reading past buffer
                 let entry_bytes = match elem.as_ref() {
-                    TypeSpec::StructRef(name) if name == "MessageCountEntry" || name == "PlotCountValue" => 2,
+                    TypeSpec::StructRef(name)
+                        if name == "MessageCountEntry" || name == "PlotCountValue" =>
+                    {
+                        2
+                    }
                     TypeSpec::StructRef(name) if name == "BdsRegisterEntry" => 8,
                     _ => 0,
                 };
@@ -715,9 +842,9 @@ impl Codec {
                 };
                 let mut list = Vec::with_capacity(n as usize);
                 for i in 0..n {
-                    let v = self
-                        .decode_type_spec(r, elem, structs, ctx)
-                        .map_err(|e| CodecError::Validation(format!("rep_list item {}/{}: {}", i + 1, n, e)))?;
+                    let v = self.decode_type_spec(r, elem, structs, ctx).map_err(|e| {
+                        CodecError::Validation(format!("rep_list item {}/{}: {}", i + 1, n, e))
+                    })?;
                     list.push(v);
                 }
                 Ok(Value::List(list))
@@ -746,8 +873,16 @@ impl Codec {
                             *bit_index += 1;
                             bit != 0
                         }
-                        PresenceState::BitmapPresence { bytes, bit_index, presence_per_block } => {
-                            let bits_per_block = if *presence_per_block == 0 { 8 } else { *presence_per_block as usize };
+                        PresenceState::BitmapPresence {
+                            bytes,
+                            bit_index,
+                            presence_per_block,
+                        } => {
+                            let bits_per_block = if *presence_per_block == 0 {
+                                8
+                            } else {
+                                *presence_per_block as usize
+                            };
                             let wire_shift = |bit_idx: usize| 7 - bit_idx;
                             // At message level (single bitmap presence on stack), use explicit mapping so each optional
                             // reads the correct bit by field name (e.g. UAP order).
@@ -757,8 +892,12 @@ impl Codec {
                             let bit = if use_mapping {
                                 let msg_name = msg_name_opt.as_ref().unwrap();
                                 let field_name = field_name_opt.as_ref().unwrap();
-                                if let Some(mapping) = self.resolved.bitmap_presence_mapping_message(msg_name) {
-                                    if let Some(bit_pos) = mapping.bit_for_field(field_name) {
+                                if let Some(mapping) =
+                                    self.resolved.bitmap_presence_mapping_message(msg_name)
+                                {
+                                    let bit_pos_opt: Option<u32> =
+                                        mapping.bit_for_field(field_name.as_str());
+                                    if let Some(bit_pos) = bit_pos_opt {
                                         let byte_idx = (bit_pos as usize) / bits_per_block;
                                         let bit_idx = (bit_pos as usize) % bits_per_block;
                                         let b = if byte_idx < bytes.len() {
@@ -771,19 +910,31 @@ impl Codec {
                                         let byte_idx = *bit_index / bits_per_block;
                                         let bit_idx = *bit_index % bits_per_block;
                                         *bit_index += 1;
-                                        if byte_idx < bytes.len() { (bytes[byte_idx] >> (7 - bit_idx)) & 1 } else { 0 }
+                                        if byte_idx < bytes.len() {
+                                            (bytes[byte_idx] >> (7 - bit_idx)) & 1
+                                        } else {
+                                            0
+                                        }
                                     }
                                 } else {
                                     let byte_idx = *bit_index / bits_per_block;
                                     let bit_idx = *bit_index % bits_per_block;
                                     *bit_index += 1;
-                                    if byte_idx < bytes.len() { (bytes[byte_idx] >> (7 - bit_idx)) & 1 } else { 0 }
+                                    if byte_idx < bytes.len() {
+                                        (bytes[byte_idx] >> (7 - bit_idx)) & 1
+                                    } else {
+                                        0
+                                    }
                                 }
                             } else {
                                 let byte_idx = *bit_index / bits_per_block;
                                 let bit_idx = *bit_index % bits_per_block;
                                 *bit_index += 1;
-                                if byte_idx < bytes.len() { (bytes[byte_idx] >> (7 - bit_idx)) & 1 } else { 0 }
+                                if byte_idx < bytes.len() {
+                                    (bytes[byte_idx] >> (7 - bit_idx)) & 1
+                                } else {
+                                    0
+                                }
                             };
                             bit != 0
                         }
@@ -820,10 +971,8 @@ impl Codec {
                     w.write_all(&vec![0u8; *n as usize])?;
                     Ok(())
                 }
-                PaddingKind::Bits(n) => {
-                    self.write_bits(w, ctx, *n, 0)
-                }
-            }
+                PaddingKind::Bits(n) => self.write_bits(w, ctx, *n, 0),
+            },
             TypeSpec::Bitfield(n) => {
                 let val = v.as_u64().unwrap_or(0);
                 self.write_bits(w, ctx, *n, val)
@@ -862,7 +1011,13 @@ impl Codec {
                 self.ensure_encode_bit_aligned(ctx)?;
                 if let Some(enum_sec) = self.resolved.get_enum(name) {
                     let raw = v.as_u64().unwrap_or(0) as u8;
-                    let ok = enum_sec.variants.iter().any(|(_, lit)| lit.as_i64() == Some(raw as i64));
+                    let mut ok = false;
+                    for (_, lit) in &enum_sec.variants {
+                        if lit.as_i64() == Some(raw as i64) {
+                            ok = true;
+                            break;
+                        }
+                    }
                     if !ok {
                         return Err(CodecError::Validation(format!(
                             "enum {}: value {} not in allowed set",
@@ -872,7 +1027,10 @@ impl Codec {
                     w.write_all(&[raw])?;
                     Ok(())
                 } else {
-                    let s = self.resolved.get_struct(name).ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
+                    let s = self
+                        .resolved
+                        .get_struct(name)
+                        .ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
                     let m = v.as_struct().cloned().unwrap_or_default();
                     let mut sub = EncodeContext::from_values(&m);
                     self.encode_struct(w, s, structs, &mut sub)?;
@@ -962,13 +1120,15 @@ impl Codec {
             // Optional with condition that matched: decode inner type directly (no bitmap presence read).
             let v = if let Some(ref _cond) = f.condition {
                 if let TypeSpec::Optional(elem) = &f.type_spec {
-                    let inner = self
-                        .decode_type_spec(r, elem, structs, ctx)
-                        .map_err(|e| CodecError::Validation(format!("{}.{}: {}", s.name, f.name, e)))?;
+                    let inner = self.decode_type_spec(r, elem, structs, ctx).map_err(|e| {
+                        CodecError::Validation(format!("{}.{}: {}", s.name, f.name, e))
+                    })?;
                     Value::List(vec![inner])
                 } else {
                     self.decode_type_spec(r, &f.type_spec, structs, ctx)
-                        .map_err(|e| CodecError::Validation(format!("{}.{}: {}", s.name, f.name, e)))?
+                        .map_err(|e| {
+                            CodecError::Validation(format!("{}.{}: {}", s.name, f.name, e))
+                        })?
                 }
             } else {
                 self.decode_type_spec(r, &f.type_spec, structs, ctx)
@@ -1020,23 +1180,36 @@ impl Codec {
             // Optional with condition that matched: encode inner type only (no presence byte).
             if f.condition.is_some() {
                 if let TypeSpec::Optional(elem) = &f.type_spec {
-                    let v = ctx.get(&f.name).cloned().unwrap_or_else(|| self.default_for_type_spec(&f.type_spec));
-                    let inner = v.as_list().and_then(|l| l.first().cloned()).unwrap_or_else(|| self.default_for_type_spec(elem));
+                    let v = ctx
+                        .get(&f.name)
+                        .cloned()
+                        .unwrap_or_else(|| self.default_for_type_spec(&f.type_spec));
+                    let inner = v
+                        .as_list()
+                        .and_then(|l| l.first().cloned())
+                        .unwrap_or_else(|| self.default_for_type_spec(elem));
                     self.encode_type_spec(w, elem, &inner, structs, ctx)?;
                     i += 1;
                     continue;
                 }
             }
             if let TypeSpec::PresenceBits(n) = &f.type_spec {
-                let optional_indices = self.collect_following_optionals_struct(&s.fields, i + 1, ctx);
+                let optional_indices =
+                    self.collect_following_optionals_struct(&s.fields, i + 1, ctx);
                 let bitmap = self.build_presence_bitmap_struct(&s.fields, &optional_indices, ctx);
                 self.write_bitmap_n(w, *n, bitmap)?;
                 for (bit_j, &idx) in optional_indices.iter().enumerate() {
                     if (bitmap >> bit_j) & 1 != 0 {
                         let o = &s.fields[idx];
-                        let v = ctx.get(&o.name).cloned().unwrap_or_else(|| self.default_for_type_spec(&o.type_spec));
+                        let v = ctx
+                            .get(&o.name)
+                            .cloned()
+                            .unwrap_or_else(|| self.default_for_type_spec(&o.type_spec));
                         if let TypeSpec::Optional(elem) = &o.type_spec {
-                            let inner = v.as_list().and_then(|l| l.first().cloned()).unwrap_or_else(|| self.default_for_type_spec(elem));
+                            let inner = v
+                                .as_list()
+                                .and_then(|l| l.first().cloned())
+                                .unwrap_or_else(|| self.default_for_type_spec(elem));
                             self.encode_type_spec(w, elem, &inner, structs, ctx)?;
                         }
                     }
@@ -1045,17 +1218,37 @@ impl Codec {
                 i += 1;
                 continue;
             }
-            if let TypeSpec::BitmapPresence { total_bits, presence_per_block, .. } = &f.type_spec {
-                let optional_indices = self.collect_following_optionals_struct(&s.fields, i + 1, ctx);
-                let mut bp_bytes = self.build_bitmap_presence_bytes_struct(&s.fields, &optional_indices, ctx, *presence_per_block);
-                let max_encoded_bits = if *presence_per_block == 0 { *total_bits } else { ((*total_bits + presence_per_block - 1) / presence_per_block) * (presence_per_block + 1) };
+            if let TypeSpec::BitmapPresence {
+                total_bits,
+                presence_per_block,
+                ..
+            } = &f.type_spec
+            {
+                let optional_indices =
+                    self.collect_following_optionals_struct(&s.fields, i + 1, ctx);
+                let mut bp_bytes = self.build_bitmap_presence_bytes_struct(
+                    &s.fields,
+                    &optional_indices,
+                    ctx,
+                    *presence_per_block,
+                );
+                let max_encoded_bits = if *presence_per_block == 0 {
+                    *total_bits
+                } else {
+                    ((*total_bits + presence_per_block - 1) / presence_per_block)
+                        * (presence_per_block + 1)
+                };
                 let max_bytes = ((max_encoded_bits + 7) / 8) as usize;
                 bp_bytes.truncate(max_bytes);
                 if *presence_per_block != 0 && !bp_bytes.is_empty() {
                     let last = bp_bytes.len() - 1;
                     bp_bytes[last] &= 0xFE;
                 }
-                let bits_per_block = if *presence_per_block == 0 { 8 } else { *presence_per_block as usize };
+                let bits_per_block = if *presence_per_block == 0 {
+                    8
+                } else {
+                    *presence_per_block as usize
+                };
                 if *presence_per_block == 0 && *total_bits == 1 {
                     // Single presence bit: write to LSB (bit 0) of current byte (e.g. I048/170 FX).
                     let bit = bp_bytes.get(0).map(|&b| (b >> 7) & 1).unwrap_or(0);
@@ -1065,7 +1258,10 @@ impl Codec {
                     for bit_j in 0..*total_bits as usize {
                         let byte_idx = bit_j / 8;
                         let bit_in_byte = 7 - (bit_j % 8);
-                        let bit = bp_bytes.get(byte_idx).map(|&b| (b >> bit_in_byte) & 1).unwrap_or(0);
+                        let bit = bp_bytes
+                            .get(byte_idx)
+                            .map(|&b| (b >> bit_in_byte) & 1)
+                            .unwrap_or(0);
                         self.write_bits(w, ctx, 1, bit as u64)?;
                     }
                 } else {
@@ -1089,11 +1285,22 @@ impl Codec {
                 }
                 for (bit_j, &idx) in optional_indices.iter().enumerate() {
                     let bit_in_byte = 7 - (bit_j % bits_per_block);
-                    if bp_bytes.get(bit_j / bits_per_block).map(|&b| (b >> bit_in_byte) & 1).unwrap_or(0) != 0 {
+                    if bp_bytes
+                        .get(bit_j / bits_per_block)
+                        .map(|&b| (b >> bit_in_byte) & 1)
+                        .unwrap_or(0)
+                        != 0
+                    {
                         let o = &s.fields[idx];
-                        let v = ctx.get(&o.name).cloned().unwrap_or_else(|| self.default_for_type_spec(&o.type_spec));
+                        let v = ctx
+                            .get(&o.name)
+                            .cloned()
+                            .unwrap_or_else(|| self.default_for_type_spec(&o.type_spec));
                         if let TypeSpec::Optional(elem) = &o.type_spec {
-                            let inner = v.as_list().and_then(|l| l.first().cloned()).unwrap_or_else(|| self.default_for_type_spec(elem));
+                            let inner = v
+                                .as_list()
+                                .and_then(|l| l.first().cloned())
+                                .unwrap_or_else(|| self.default_for_type_spec(elem));
                             self.encode_type_spec(w, elem, &inner, structs, ctx)?;
                         }
                     }
@@ -1102,7 +1309,10 @@ impl Codec {
                 i += 1;
                 continue;
             }
-            let v = ctx.get(&f.name).cloned().unwrap_or_else(|| self.default_for_type_spec(&f.type_spec));
+            let v = ctx
+                .get(&f.name)
+                .cloned()
+                .unwrap_or_else(|| self.default_for_type_spec(&f.type_spec));
             self.encode_type_spec(w, &f.type_spec, &v, structs, ctx)?;
             i += 1;
         }
@@ -1110,7 +1320,12 @@ impl Codec {
         Ok(())
     }
 
-    fn collect_following_optionals_struct(&self, fields: &[StructField], start: usize, ctx: &EncodeContext) -> Vec<usize> {
+    fn collect_following_optionals_struct(
+        &self,
+        fields: &[StructField],
+        start: usize,
+        ctx: &EncodeContext,
+    ) -> Vec<usize> {
         let mut out = Vec::new();
         for j in start..fields.len() {
             let f = &fields[j];
@@ -1130,11 +1345,18 @@ impl Codec {
         out
     }
 
-    fn build_presence_bitmap_struct(&self, fields: &[StructField], indices: &[usize], ctx: &EncodeContext) -> u64 {
+    fn build_presence_bitmap_struct(
+        &self,
+        fields: &[StructField],
+        indices: &[usize],
+        ctx: &EncodeContext,
+    ) -> u64 {
         let mut bitmap = 0u64;
         for (bit, &idx) in indices.iter().enumerate() {
             let v = ctx.get(&fields[idx].name);
-            let present = v.map(|v| v.as_list().map(|l| !l.is_empty()).unwrap_or(false)).unwrap_or(false);
+            let present = v
+                .map(|v| v.as_list().map(|l| !l.is_empty()).unwrap_or(false))
+                .unwrap_or(false);
             if present {
                 bitmap |= 1 << bit;
             }
@@ -1142,14 +1364,26 @@ impl Codec {
         bitmap
     }
 
-    fn build_bitmap_presence_bytes_struct(&self, fields: &[StructField], indices: &[usize], ctx: &EncodeContext, presence_per_block: u32) -> Vec<u8> {
+    fn build_bitmap_presence_bytes_struct(
+        &self,
+        fields: &[StructField],
+        indices: &[usize],
+        ctx: &EncodeContext,
+        presence_per_block: u32,
+    ) -> Vec<u8> {
         let mut bits = Vec::with_capacity(indices.len());
         for &idx in indices {
             let v = ctx.get(&fields[idx].name);
-            let present = v.map(|v| v.as_list().map(|l| !l.is_empty()).unwrap_or(false)).unwrap_or(false);
+            let present = v
+                .map(|v| v.as_list().map(|l| !l.is_empty()).unwrap_or(false))
+                .unwrap_or(false);
             bits.push(present);
         }
-        let per_block = if presence_per_block == 0 { 8 } else { presence_per_block as usize };
+        let per_block = if presence_per_block == 0 {
+            8
+        } else {
+            presence_per_block as usize
+        };
         let mut out = Vec::new();
         for chunk in bits.chunks(per_block) {
             let mut byte = 0u8;
@@ -1208,8 +1442,7 @@ impl Codec {
                 if !in_any {
                     return Err(CodecError::Validation(format!(
                         "value {} not in any interval {:?}",
-                        n,
-                        intervals
+                        n, intervals
                     )));
                 }
             }
@@ -1218,9 +1451,13 @@ impl Codec {
                 if n.is_none() {
                     return Ok(()); // non-numeric: skip enum check
                 }
-                let ok = allowed.iter().any(|l| l.as_i64() == n);
+                let ok = allowed
+                    .iter()
+                    .any(|l: &crate::ast::Literal| l.as_i64() == n);
                 if !ok {
-                    return Err(CodecError::Validation("value not in allowed enum".to_string()));
+                    return Err(CodecError::Validation(
+                        "value not in allowed enum".to_string(),
+                    ));
                 }
             }
         }
@@ -1260,7 +1497,12 @@ impl Codec {
         Ok(())
     }
 
-    fn decode_sized_int(&self, r: &mut Cursor<&[u8]>, bt: &BaseType, n: u64) -> Result<Value, CodecError> {
+    fn decode_sized_int(
+        &self,
+        r: &mut Cursor<&[u8]>,
+        bt: &BaseType,
+        n: u64,
+    ) -> Result<Value, CodecError> {
         let bytes = ((n + 7) / 8) as usize;
         let mut buf = vec![0u8; bytes];
         r.read_exact(&mut buf)?;
@@ -1290,7 +1532,13 @@ impl Codec {
         })
     }
 
-    fn encode_sized_int(&self, w: &mut Vec<u8>, bt: &BaseType, n: u64, v: &Value) -> Result<(), CodecError> {
+    fn encode_sized_int(
+        &self,
+        w: &mut Vec<u8>,
+        bt: &BaseType,
+        n: u64,
+        v: &Value,
+    ) -> Result<(), CodecError> {
         let bytes = ((n + 7) / 8) as usize;
         let mask = if n >= 64 { u64::MAX } else { (1u64 << n) - 1 };
         let raw = match bt {
@@ -1447,32 +1695,28 @@ impl Codec {
     fn u64_to_bytes(&self, v: u64, len: usize) -> Vec<u8> {
         let mut buf = vec![0u8; len];
         match self.endianness {
-            Endianness::Big => {
-                match len {
-                    1 => buf[0] = v as u8,
-                    2 => BigEndian::write_u16(&mut buf, v as u16),
-                    4 => BigEndian::write_u32(&mut buf, v as u32),
-                    8 => BigEndian::write_u64(&mut buf, v),
-                    _ => {
-                        let mut b = [0u8; 8];
-                        BigEndian::write_u64(&mut b, v);
-                        buf.copy_from_slice(&b[8 - len..]);
-                    }
+            Endianness::Big => match len {
+                1 => buf[0] = v as u8,
+                2 => BigEndian::write_u16(&mut buf, v as u16),
+                4 => BigEndian::write_u32(&mut buf, v as u32),
+                8 => BigEndian::write_u64(&mut buf, v),
+                _ => {
+                    let mut b = [0u8; 8];
+                    BigEndian::write_u64(&mut b, v);
+                    buf.copy_from_slice(&b[8 - len..]);
                 }
-            }
-            Endianness::Little => {
-                match len {
-                    1 => buf[0] = v as u8,
-                    2 => LittleEndian::write_u16(&mut buf, v as u16),
-                    4 => LittleEndian::write_u32(&mut buf, v as u32),
-                    8 => LittleEndian::write_u64(&mut buf, v),
-                    _ => {
-                        let mut b = [0u8; 8];
-                        LittleEndian::write_u64(&mut b, v);
-                        buf.copy_from_slice(&b[..len]);
-                    }
+            },
+            Endianness::Little => match len {
+                1 => buf[0] = v as u8,
+                2 => LittleEndian::write_u16(&mut buf, v as u16),
+                4 => LittleEndian::write_u32(&mut buf, v as u32),
+                8 => LittleEndian::write_u64(&mut buf, v),
+                _ => {
+                    let mut b = [0u8; 8];
+                    LittleEndian::write_u64(&mut b, v);
+                    buf.copy_from_slice(&b[..len]);
                 }
-            }
+            },
         }
         buf
     }
@@ -1481,9 +1725,16 @@ impl Codec {
 /// Presence state for optional fields: fixed bitmap (presence_bits) or bitmap presence (bitmap_presence).
 #[derive(Clone)]
 enum PresenceState {
-    Bitmap { value: u64, bit_index: usize },
+    Bitmap {
+        value: u64,
+        bit_index: usize,
+    },
     /// presence_per_block: 0 = consecutive presence bits (8 per byte); k>0 = k presence + 1 FX per block.
-    BitmapPresence { bytes: Vec<u8>, bit_index: usize, presence_per_block: u32 },
+    BitmapPresence {
+        bytes: Vec<u8>,
+        bit_index: usize,
+        presence_per_block: u32,
+    },
 }
 
 /// Bit-level packing state for decoding (`bitfield(n)` / `padding_bits(n)`).
@@ -1497,7 +1748,10 @@ struct BitReadState {
 
 impl Default for BitReadState {
     fn default() -> Self {
-        BitReadState { cur: 0, next_bit: 8 }
+        BitReadState {
+            cur: 0,
+            next_bit: 8,
+        }
     }
 }
 
@@ -1517,7 +1771,10 @@ struct BitWriteState {
 
 impl Default for BitWriteState {
     fn default() -> Self {
-        BitWriteState { cur: 0, next_bit: 0 }
+        BitWriteState {
+            cur: 0,
+            next_bit: 0,
+        }
     }
 }
 
@@ -1554,7 +1811,10 @@ struct EncodeContext {
 
 impl EncodeContext {
     fn from_values(m: &HashMap<String, Value>) -> Self {
-        EncodeContext { values: m.clone(), bit_write: BitWriteState::default() }
+        EncodeContext {
+            values: m.clone(),
+            bit_write: BitWriteState::default(),
+        }
     }
     fn get(&self, k: &str) -> Option<&Value> {
         self.values.get(k)
@@ -1609,7 +1869,10 @@ struct DecodeProfileGuard {
 #[cfg(feature = "codec_decode_profile")]
 impl DecodeProfileGuard {
     fn new(label: &'static str) -> Self {
-        DecodeProfileGuard { label, start: Instant::now() }
+        DecodeProfileGuard {
+            label,
+            start: Instant::now(),
+        }
     }
 }
 

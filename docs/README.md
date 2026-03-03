@@ -217,6 +217,23 @@ cargo fuzz run parser_fuzz -- -max_total_time=60
 
 The fuzz harness in `fuzz/fuzz_targets/parser_fuzz.rs` feeds valid UTF-8 strings to `aiprotodsl::parse`; invalid UTF-8 is skipped. Add corpus seeds under `fuzz/corpus/parser_fuzz/` (e.g. small valid DSL snippets) to improve coverage.
 
+## Benchmarks
+
+ Performance comparison on a MacBook Pro (M3 Max), processing [cat_034_048.pcap](assets/cat_034_048.pcap) (120 blocks, ~6.5 KB payload, single core):
+
+ | Strategy | Latency (µs/pcap) | Latency (ns/pkt) | Throughput (Rec/s) | Throughput (MB/s) |
+ |----------|------------------:|-----------------:|-------------------:|------------------:|
+ | **VM Walk** (Bytecode) | **~11.9 µs** | **~145 ns** | **~6.89 M/s** | **~548 MB/s** (~4.4 Gbps) |
+ | Walk (Extent) | ~79.4 µs | ~968 ns | ~1.03 M/s | ~82 MB/s (~650 Mbps) |
+ | Walk + Validate | ~115.4 µs | ~1,407 ns | ~0.71 M/s | ~56 MB/s (~450 Mbps) |
+ | Walk + Val + Zero | ~100.6 µs | ~1,226 ns | ~0.82 M/s | ~65 MB/s (~520 Mbps) |
+ | Decode | ~3074 µs | ~37,488 ns | ~0.03 M/s | ~2.1 MB/s (~17 Mbps) |
+ | Decode + Encode | ~3850 µs | ~46,951 ns | ~0.02 M/s | ~1.7 MB/s (~14 Mbps) |
+
+ *Note: The VM is ~6.6x faster than the optimized Rust walker and ~258x faster than full decoding because it executes a linear, flatten bytecode stream that only touches necessary bytes, avoiding function call overhead and complex control flow.*
+
+See [VM.md](VM.md) for details on the Virtual Machine architecture and instruction set.
+
 ## License
 
 MIT OR Apache-2.0

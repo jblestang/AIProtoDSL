@@ -18,12 +18,16 @@ fn write_record_hex_with_offset(w: &mut dyn Write, block: &[u8]) -> std::io::Res
     const COLS: usize = 16;
     for (i, chunk) in record.chunks(COLS).enumerate() {
         let start = i * COLS;
-        let hex_line = chunk.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
+        let hex_line = chunk
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join(" ");
         writeln!(w, "  offset {:3}: {}", start, hex_line)?;
     }
     Ok(())
 }
- 
+
 fn main() -> anyhow::Result<()> {
     let mut raw_args: Vec<String> = std::env::args().skip(1).collect();
     let verbose = if let Some(pos) = raw_args.iter().position(|a| a == "--verbose" || a == "-v") {
@@ -53,14 +57,20 @@ fn main() -> anyhow::Result<()> {
             arg.strip_prefix("--frame=").and_then(|s| s.parse().ok())
         });
     let mut args = raw_args.into_iter();
-    let pcap_path: PathBuf = args.next().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("assets/asterix.pcap"));
-    let dsl_path: PathBuf = args.next().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("examples/asterix_family.dsl"));
- 
+    let pcap_path: PathBuf = args
+        .next()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("assets/asterix.pcap"));
+    let dsl_path: PathBuf = args
+        .next()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("examples/asterix_family.dsl"));
+
     let src = std::fs::read_to_string(&dsl_path)?;
     let protocol = parse(&src).map_err(|e| anyhow::anyhow!(e))?;
     let resolved = ResolvedProtocol::resolve(protocol).map_err(|e| anyhow::anyhow!(e))?;
     let codec = Codec::new(resolved.clone(), Endianness::Big);
- 
+
     let mut pkt_count: u64 = 0;
     let mut udp_count: u64 = 0;
     let mut block_count: u64 = 0;
@@ -122,7 +132,7 @@ fn main() -> anyhow::Result<()> {
             &mut first_errors,
         )?;
     }
- 
+
     eprintln!("pcap: {}", pcap_path.display());
     eprintln!("dsl:  {}", dsl_path.display());
     eprintln!("packets: {}", pkt_count);
@@ -135,7 +145,10 @@ fn main() -> anyhow::Result<()> {
         cats.sort_by_key(|(c, _)| *c);
         eprintln!("known categories summary:");
         for (cat, (blocks, decoded, removed)) in cats {
-            eprintln!("  CAT{:03}: blocks={}, decoded={}, removed={}", cat, blocks, decoded, removed);
+            eprintln!(
+                "  CAT{:03}: blocks={}, decoded={}, removed={}",
+                cat, blocks, decoded, removed
+            );
             if let Some(err) = first_errors.get(&cat) {
                 eprintln!("    first error: {}", err);
             }
@@ -149,7 +162,7 @@ fn main() -> anyhow::Result<()> {
             eprintln!("  CAT{:03}: {}", cat, n);
         }
     }
- 
+
     Ok(())
 }
 
@@ -240,7 +253,10 @@ fn run_pcapng<R: Read>(
                         PcapNgBlock::InterfaceDescription(idb) => if_linktypes.push(idb.linktype),
                         PcapNgBlock::EnhancedPacket(epb) => {
                             *pkt_count += 1;
-                            let lt = if_linktypes.get(epb.if_id as usize).copied().unwrap_or(Linktype(1));
+                            let lt = if_linktypes
+                                .get(epb.if_id as usize)
+                                .copied()
+                                .unwrap_or(Linktype(1));
                             let frame = epb.packet_data();
                             if let Some(udp_payload) = udp_payload_from_linktype(lt, frame) {
                                 *udp_count += 1;
@@ -300,7 +316,7 @@ fn run_pcapng<R: Read>(
     }
     Ok(())
 }
- 
+
 fn process_udp_payload(
     codec: &Codec,
     resolved: &ResolvedProtocol,
@@ -329,7 +345,7 @@ fn process_udp_payload(
         let block = &udp_payload[off..off + block_len];
         *block_count += 1;
         any_block = true;
- 
+
         match codec.decode_transport(block) {
             Ok(transport_values) => {
                 if let Some(msg_name) = resolved.message_for_transport_values(&transport_values) {
@@ -351,12 +367,20 @@ fn process_udp_payload(
                                 if frame_filter.map(|f| f != packet_index).unwrap_or(false) {
                                     // skip dump for this packet
                                 } else {
-                                    let _ = writeln!(w, "=== packet {}  udp_offset {}  block cat {}  len {} ===", packet_index, off, cat, block_len);
+                                    let _ = writeln!(
+                                        w,
+                                        "=== packet {}  udp_offset {}  block cat {}  len {} ===",
+                                        packet_index, off, cat, block_len
+                                    );
                                     let _ = writeln!(w, "  data (offset 0 = first byte of record, after 3-byte transport):");
                                     let _ = write_record_hex_with_offset(&mut **w, block);
                                     for msg in &res.messages {
                                         let (a, b) = msg.byte_range;
-                                        let _ = writeln!(w, "  record bytes [{}-{}]  DECODED {}", a, b, msg.name);
+                                        let _ = writeln!(
+                                            w,
+                                            "  record bytes [{}-{}]  DECODED {}",
+                                            a, b, msg.name
+                                        );
                                         let mut keys: Vec<_> = msg.values.keys().collect();
                                         keys.sort();
                                         for k in keys {
@@ -369,7 +393,12 @@ fn process_udp_payload(
                                             let txt = value_to_dump(resolved, &msg.name, k, v, 0);
                                             let mut lines = txt.lines();
                                             if let Some(first) = lines.next() {
-                                                let _ = writeln!(w, "    {}: {}", k, first.trim_start());
+                                                let _ = writeln!(
+                                                    w,
+                                                    "    {}: {}",
+                                                    k,
+                                                    first.trim_start()
+                                                );
                                                 for line in lines {
                                                     let _ = writeln!(w, "      {}", line);
                                                 }
@@ -378,7 +407,11 @@ fn process_udp_payload(
                                     }
                                     for rm in &res.removed {
                                         let (a, b) = rm.byte_range;
-                                        let _ = writeln!(w, "  record bytes [{}-{}]  REMOVED: {}", a, b, rm.reason);
+                                        let _ = writeln!(
+                                            w,
+                                            "  record bytes [{}-{}]  REMOVED: {}",
+                                            a, b, rm.reason
+                                        );
                                     }
                                 }
                             }
@@ -390,10 +423,15 @@ fn process_udp_payload(
                             entry.2 += 1;
                             first_errors.entry(cat).or_insert_with(|| e.to_string());
                             if let Some(w) = dump.as_mut() {
-                                if frame_filter.map(|f| f != packet_index).unwrap_or(false) {}
-                                else {
-                                    let _ = writeln!(w, "=== packet {}  udp_offset {}  block cat {}  len {} ===", packet_index, off, cat, block_len);
-                                    let _ = writeln!(w, "  data (offset 0 = first byte of record):");
+                                if frame_filter.map(|f| f != packet_index).unwrap_or(false) {
+                                } else {
+                                    let _ = writeln!(
+                                        w,
+                                        "=== packet {}  udp_offset {}  block cat {}  len {} ===",
+                                        packet_index, off, cat, block_len
+                                    );
+                                    let _ =
+                                        writeln!(w, "  data (offset 0 = first byte of record):");
                                     let _ = write_record_hex_with_offset(&mut **w, block);
                                     let _ = writeln!(w, "  block decode error: {}", e);
                                 }
@@ -420,7 +458,7 @@ fn process_udp_payload(
                 }
             }
         }
- 
+
         off += block_len;
     }
     if verbose && !any_block && !udp_payload.is_empty() {
@@ -432,19 +470,19 @@ fn process_udp_payload(
         );
     }
 }
- 
+
 /// Extract UDP payload bytes from a captured frame, using linktype and IPv4/UDP length fields.
 /// This avoids including Ethernet padding in short frames.
 fn udp_payload_from_linktype(linktype: Linktype, frame: &[u8]) -> Option<&[u8]> {
     let l3 = match linktype.0 {
-        1 => ethernet_l3(frame)?,      // DLT_EN10MB
-        101 => frame,                  // DLT_RAW
-        113 => linux_sll_l3(frame)?,   // DLT_LINUX_SLL
+        1 => ethernet_l3(frame)?,    // DLT_EN10MB
+        101 => frame,                // DLT_RAW
+        113 => linux_sll_l3(frame)?, // DLT_LINUX_SLL
         _ => return None,
     };
     ipv4_udp_payload(l3)
 }
- 
+
 fn ethernet_l3(frame: &[u8]) -> Option<&[u8]> {
     if frame.len() < 14 {
         return None;
@@ -466,7 +504,7 @@ fn ethernet_l3(frame: &[u8]) -> Option<&[u8]> {
         _ => None,
     }
 }
- 
+
 fn linux_sll_l3(frame: &[u8]) -> Option<&[u8]> {
     // Linux cooked capture v1 (SLL): 16-byte header, protocol at bytes 14..16
     if frame.len() < 16 {
@@ -478,7 +516,7 @@ fn linux_sll_l3(frame: &[u8]) -> Option<&[u8]> {
         _ => None,
     }
 }
- 
+
 fn ipv4_udp_payload(l3: &[u8]) -> Option<&[u8]> {
     if l3.len() < 20 {
         return None;
@@ -496,7 +534,11 @@ fn ipv4_udp_payload(l3: &[u8]) -> Option<&[u8]> {
     if total_len < ihl {
         return None;
     }
-    let l3_trunc = if total_len <= l3.len() { &l3[..total_len] } else { l3 };
+    let l3_trunc = if total_len <= l3.len() {
+        &l3[..total_len]
+    } else {
+        l3
+    };
     if l3_trunc.len() < ihl + 8 {
         return None;
     }
@@ -514,4 +556,3 @@ fn ipv4_udp_payload(l3: &[u8]) -> Option<&[u8]> {
     }
     Some(&udp[8..udp_len])
 }
-

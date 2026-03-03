@@ -40,7 +40,9 @@ pub fn decode_frame(
 ) -> Result<FrameDecodeResult, CodecError> {
     let body_bytes = if let Some(n) = transport_len {
         if bytes.len() < n {
-            return Err(CodecError::Validation("Frame shorter than transport header".to_string()));
+            return Err(CodecError::Validation(
+                "Frame shorter than transport header".to_string(),
+            ));
         }
         &bytes[n..]
     } else {
@@ -53,7 +55,8 @@ pub fn decode_frame(
     let base = transport_len.unwrap_or(0);
 
     while offset < body_bytes.len() {
-        let (consumed, result) = codec.decode_message_with_extent(message_name, &body_bytes[offset..]);
+        let (consumed, result) =
+            codec.decode_message_with_extent(message_name, &body_bytes[offset..]);
         if consumed == 0 {
             break;
         }
@@ -105,4 +108,3 @@ pub fn encode_frame_with_compliant_only(
 
     Ok(out)
 }
-

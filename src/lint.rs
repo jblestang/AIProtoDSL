@@ -79,7 +79,10 @@ pub fn lint(source: &str) -> Vec<LintMessage> {
         // Depth: content lines (non-empty after trim) must have exactly `depth` tabs; closing `}` uses one less
         if !trimmed.is_empty() && !trimmed.starts_with("//") && !trimmed.starts_with("/*") {
             let tab_count = leading.chars().filter(|&c| c == '\t').count();
-            let content_for_depth = trimmed.find("//").map(|i| trimmed[..i].trim_end()).unwrap_or(trimmed);
+            let content_for_depth = trimmed
+                .find("//")
+                .map(|i| trimmed[..i].trim_end())
+                .unwrap_or(trimmed);
             let expected = if content_for_depth.trim_start().contains('}') {
                 (depth - 1).max(0) as usize
             } else {
@@ -112,10 +115,7 @@ pub fn lint(source: &str) -> Vec<LintMessage> {
                 column: 1,
                 rule: LintRule::OneFieldPerLine,
                 severity: Severity::Error,
-                message: format!(
-                    "one field per line (found {} semicolons)",
-                    semicolon_count
-                ),
+                message: format!("one field per line (found {} semicolons)", semicolon_count),
             });
         }
 
@@ -171,9 +171,14 @@ pub fn lint_fix(source: &str) -> String {
                 if s.is_empty() {
                     continue;
                 }
-                let line_depth = if s.contains('}') { (depth - 1).max(0) } else { depth.max(0) };
+                let line_depth = if s.contains('}') {
+                    (depth - 1).max(0)
+                } else {
+                    depth.max(0)
+                };
                 let indent = "\t".repeat(line_depth as usize);
-                let is_last = j == parts.len() - 1 || parts[j + 1..].iter().all(|p| p.trim().is_empty());
+                let is_last =
+                    j == parts.len() - 1 || parts[j + 1..].iter().all(|p| p.trim().is_empty());
                 let suffix = if is_last && !comment_part.is_empty() {
                     format!(";{}", comment_part)
                 } else {
@@ -258,15 +263,24 @@ mod tests {
     fn lint_tabs_only() {
         let src = "transport {\n  x: u8;\n}";
         let msgs = lint(src);
-        let tabs_only: Vec<_> = msgs.iter().filter(|m| m.rule == LintRule::IndentationTabsOnly).collect();
-        assert!(!tabs_only.is_empty(), "expected IndentationTabsOnly (spaces used)");
+        let tabs_only: Vec<_> = msgs
+            .iter()
+            .filter(|m| m.rule == LintRule::IndentationTabsOnly)
+            .collect();
+        assert!(
+            !tabs_only.is_empty(),
+            "expected IndentationTabsOnly (spaces used)"
+        );
     }
 
     #[test]
     fn lint_one_field_per_line() {
         let src = "message M {\n\tx: u8; y: u8;\n}";
         let msgs = lint(src);
-        let one_field: Vec<_> = msgs.iter().filter(|m| m.rule == LintRule::OneFieldPerLine).collect();
+        let one_field: Vec<_> = msgs
+            .iter()
+            .filter(|m| m.rule == LintRule::OneFieldPerLine)
+            .collect();
         assert!(!one_field.is_empty(), "expected OneFieldPerLine");
     }
 
@@ -274,18 +288,40 @@ mod tests {
     fn lint_clean_tabs_passes() {
         let src = "transport {\n\tx: u8;\n}\n";
         let msgs = lint(src);
-        let errors: Vec<_> = msgs.iter().filter(|m| m.severity == Severity::Error).collect();
-        assert!(errors.is_empty(), "clean tab-indented source should have no errors: {:?}", msgs);
+        let errors: Vec<_> = msgs
+            .iter()
+            .filter(|m| m.severity == Severity::Error)
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "clean tab-indented source should have no errors: {:?}",
+            msgs
+        );
     }
 
     #[test]
     fn lint_fix_preserves_comments() {
         let src = "transport {\n\tx: u8;  // inline\n\t// comment only\n}\n";
         let fixed = lint_fix(src);
-        assert!(fixed.contains("// inline"), "inline comment preserved: {:?}", fixed);
-        assert!(fixed.contains("// comment only"), "comment-only line preserved: {:?}", fixed);
+        assert!(
+            fixed.contains("// inline"),
+            "inline comment preserved: {:?}",
+            fixed
+        );
+        assert!(
+            fixed.contains("// comment only"),
+            "comment-only line preserved: {:?}",
+            fixed
+        );
         let msgs = lint(&fixed);
-        let errors: Vec<_> = msgs.iter().filter(|m| m.severity == Severity::Error).collect();
-        assert!(errors.is_empty(), "fixed output should pass lint: {:?}", msgs);
+        let errors: Vec<_> = msgs
+            .iter()
+            .filter(|m| m.severity == Severity::Error)
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "fixed output should pass lint: {:?}",
+            msgs
+        );
     }
 }

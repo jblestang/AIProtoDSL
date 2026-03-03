@@ -40,8 +40,10 @@
 //! ## Usage
 //!
 //! See the [README](https://github.com/yourusername/AIProtoDSL) and the `tests/integration.rs` for full examples.
-
 pub mod ast;
+pub mod compiler;
+pub mod vm;
+
 pub mod codec;
 pub mod dump;
 pub mod frame;
@@ -52,19 +54,21 @@ pub mod parser;
 pub mod value;
 pub mod walk;
 
-pub use ast::{AbstractType, BitmapPresenceMapping, PaddingKind, Protocol, ResolvedProtocol, TypeDefSection, TypeSpec};
-pub use codec::{Codec, CodecError, Endianness, get_decode_profile, reset_decode_profile};
-pub use dump::{format_scalar_raw, format_scalar_with_quantum, format_seconds_as_tod, parse_quantum, value_summary_line, value_to_dump};
+pub use ast::{
+    AbstractType, BitmapPresenceMapping, PaddingKind, Protocol, ResolvedProtocol, TypeDefSection,
+    TypeSpec,
+};
+pub use codec::{get_decode_profile, reset_decode_profile, Codec, CodecError, Endianness};
+pub use dump::{
+    format_scalar_raw, format_scalar_with_quantum, format_seconds_as_tod, parse_quantum,
+    value_summary_line, value_to_dump,
+};
 pub use frame::{decode_frame, DecodedMessage, FrameDecodeResult};
+pub use lint::{lint, LintMessage, LintRule, Severity};
 pub use parser::parse;
 pub use value::Value;
-pub use lint::{lint, LintMessage, LintRule, Severity};
 pub use walk::{
-    message_extent, validate_message_in_place,
-    validate_and_zero_message_in_place,
-    zero_padding_reserved_in_place,
-    remove_message_in_place, write_u32_in_place,
-    BinaryWalker, BinaryWalkerMut,
-    Endianness as WalkEndianness,
-    get_walk_profile, reset_walk_profile,
+    get_walk_profile, message_extent, remove_message_in_place, reset_walk_profile,
+    validate_and_zero_message_in_place, validate_message_in_place, write_u32_in_place,
+    zero_padding_reserved_in_place, BinaryWalker, BinaryWalkerMut, Endianness as WalkEndianness,
 };

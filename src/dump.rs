@@ -87,7 +87,11 @@ pub fn format_scalar_with_quantum(v: &Value, quantum: Option<&str>) -> String {
         && physical >= 3600.0
         && physical < 86400.0 * 2.0;
     if is_tod_seconds && physical >= 0.0 {
-        format!("{} ({})", format_seconds_as_tod(physical), format_scalar_raw(v))
+        format!(
+            "{} ({})",
+            format_seconds_as_tod(physical),
+            format_scalar_raw(v)
+        )
     } else if unit.is_empty() {
         format!("{} ({})", physical, format_scalar_raw(v))
     } else {
@@ -114,7 +118,10 @@ pub fn format_scalar_raw(v: &Value) -> String {
 }
 
 fn hex_string(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{:02x}", x)).collect::<Vec<_>>().join(" ")
+    b.iter()
+        .map(|x| format!("{:02x}", x))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Format a value for display (one-line summary for tree leaf, or multi-line for dump).
@@ -127,9 +134,17 @@ pub fn value_to_dump(
 ) -> String {
     let pad = "  ".repeat(indent);
     match v {
-        Value::U8(_) | Value::U16(_) | Value::U32(_) | Value::U64(_)
-        | Value::I8(_) | Value::I16(_) | Value::I32(_) | Value::I64(_)
-        | Value::Bool(_) | Value::Float(_) | Value::Double(_) => {
+        Value::U8(_)
+        | Value::U16(_)
+        | Value::U32(_)
+        | Value::U64(_)
+        | Value::I8(_)
+        | Value::I16(_)
+        | Value::I32(_)
+        | Value::I64(_)
+        | Value::Bool(_)
+        | Value::Float(_)
+        | Value::Double(_) => {
             let val_i64 = v.as_i64();
             if let Some(n) = val_i64 {
                 if resolved.get_enum(container_name).is_some() {
@@ -145,7 +160,9 @@ pub fn value_to_dump(
                         crate::TypeSpec::Optional(inner) => inner.as_ref(),
                         _ => ts,
                     };
-                    if let Some(name) = resolved.enum_variant_name_for_type_and_value(ts_for_enum, n) {
+                    if let Some(name) =
+                        resolved.enum_variant_name_for_type_and_value(ts_for_enum, n)
+                    {
                         return format!("{}{}", pad, name);
                     }
                 }
@@ -161,7 +178,10 @@ pub fn value_to_dump(
         Value::Bytes(b) => format!("{}hex({})", pad, hex_string(b)),
         Value::Struct(m) => {
             let (_, child_container) = resolved.field_quantum_and_child(container_name, field_name);
-            let container = child_container.unwrap_or(container_name);
+            let container: &str = match child_container {
+                Some(s) => s,
+                None => container_name,
+            };
             let mut lines: Vec<String> = vec![format!("{}struct {{", pad)];
             let mut keys: Vec<_> = m.keys().collect();
             keys.sort();
@@ -180,7 +200,10 @@ pub fn value_to_dump(
         }
         Value::List(lst) => {
             let (_, child_container) = resolved.field_quantum_and_child(container_name, field_name);
-            let elem_container = child_container.unwrap_or(container_name);
+            let elem_container: &str = match child_container {
+                Some(s) => s,
+                None => container_name,
+            };
             if lst.is_empty() {
                 format!("{}[]", pad)
             } else if lst.len() == 1 {
@@ -188,7 +211,13 @@ pub fn value_to_dump(
             } else {
                 let mut lines: Vec<String> = vec![format!("{}[", pad)];
                 for (i, item) in lst.iter().enumerate() {
-                    let sub = value_to_dump(resolved, elem_container, &format!("[{}]", i), item, indent + 1);
+                    let sub = value_to_dump(
+                        resolved,
+                        elem_container,
+                        &format!("[{}]", i),
+                        item,
+                        indent + 1,
+                    );
                     lines.push(format!("  [{}] {}", i, sub.trim_start()));
                 }
                 lines.push(format!("{}]", pad));
@@ -207,5 +236,8 @@ pub fn value_summary_line(
     v: &Value,
 ) -> String {
     let full = value_to_dump(resolved, container_name, field_name, v, 0);
-    full.lines().next().map(|s| s.trim().to_string()).unwrap_or_default()
+    full.lines()
+        .next()
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
 }

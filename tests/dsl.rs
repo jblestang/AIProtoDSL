@@ -176,7 +176,10 @@ message M {
 }
 "#;
     let p = parse(src).expect("parse");
-    let c = p.messages[0].fields[0].constraint.as_ref().expect("constraint");
+    let c = p.messages[0].fields[0]
+        .constraint
+        .as_ref()
+        .expect("constraint");
     assert!(matches!(c, aiprotodsl::ast::Constraint::Range(_)));
 }
 
@@ -188,7 +191,10 @@ message M {
 }
 "#;
     let p = parse(src).expect("parse");
-    let c = p.messages[0].fields[0].constraint.as_ref().expect("constraint");
+    let c = p.messages[0].fields[0]
+        .constraint
+        .as_ref()
+        .expect("constraint");
     if let aiprotodsl::ast::Constraint::Range(iv) = c {
         assert_eq!(iv.len(), 2);
     } else {
@@ -204,7 +210,10 @@ message M {
 }
 "#;
     let p = parse(src).expect("parse");
-    let c = p.messages[0].fields[0].constraint.as_ref().expect("constraint");
+    let c = p.messages[0].fields[0]
+        .constraint
+        .as_ref()
+        .expect("constraint");
     assert!(matches!(c, aiprotodsl::ast::Constraint::Enum(_)));
 }
 
@@ -565,5 +574,8 @@ payload { repeated; }
 message M { x: u8; }
 "#;
     let r = parse(src);
-    assert!(r.is_err(), "payload without messages list should fail parse");
+    assert!(
+        r.is_err(),
+        "payload without messages list should fail parse"
+    );
 }

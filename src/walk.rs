@@ -141,7 +141,9 @@ fn base_type_size(bt: &BaseType) -> usize {
 
 fn read_u8(data: &[u8], pos: &mut usize) -> Result<u8, CodecError> {
     if *pos >= data.len() {
-        return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+        return Err(CodecError::Io(std::io::Error::from(
+            std::io::ErrorKind::UnexpectedEof,
+        )));
     }
     let v = data[*pos];
     *pos += 1;
@@ -149,13 +151,20 @@ fn read_u8(data: &[u8], pos: &mut usize) -> Result<u8, CodecError> {
 }
 
 /// Read n bits from data at (pos, bit_pos), LSB first. Returns (value, new_pos, new_bit_pos).
-fn read_bits_walk(data: &[u8], pos: usize, bit_pos: u8, n: u8) -> Result<(u64, usize, u8), CodecError> {
+fn read_bits_walk(
+    data: &[u8],
+    pos: usize,
+    bit_pos: u8,
+    n: u8,
+) -> Result<(u64, usize, u8), CodecError> {
     let mut pos = pos;
     let mut bit_pos = bit_pos;
     let mut value = 0u64;
     for i in 0..n {
         if pos >= data.len() {
-            return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+            return Err(CodecError::Io(std::io::Error::from(
+                std::io::ErrorKind::UnexpectedEof,
+            )));
         }
         let bit = (data[pos] >> bit_pos) & 1;
         value |= (bit as u64) << i;
@@ -170,7 +179,9 @@ fn read_bits_walk(data: &[u8], pos: usize, bit_pos: u8, n: u8) -> Result<(u64, u
 
 fn read_u32_slice(data: &[u8], pos: usize, endianness: Endianness) -> Result<u32, CodecError> {
     if pos + 4 > data.len() {
-        return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+        return Err(CodecError::Io(std::io::Error::from(
+            std::io::ErrorKind::UnexpectedEof,
+        )));
     }
     let v = match endianness {
         Endianness::Big => BigEndian::read_u32(&data[pos..]),
@@ -179,15 +190,26 @@ fn read_u32_slice(data: &[u8], pos: usize, endianness: Endianness) -> Result<u32
     Ok(v)
 }
 
-fn read_bitmap_n(data: &[u8], pos: &mut usize, endianness: Endianness, n: u64) -> Result<u64, CodecError> {
+fn read_bitmap_n(
+    data: &[u8],
+    pos: &mut usize,
+    endianness: Endianness,
+    n: u64,
+) -> Result<u64, CodecError> {
     let len = match n {
         1 => 1,
         2 => 2,
         4 => 4,
-        _ => return Err(CodecError::Validation("presence_bits(n): n must be 1, 2, or 4".to_string())),
+        _ => {
+            return Err(CodecError::Validation(
+                "presence_bits(n): n must be 1, 2, or 4".to_string(),
+            ))
+        }
     };
     if *pos + len > data.len() {
-        return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+        return Err(CodecError::Io(std::io::Error::from(
+            std::io::ErrorKind::UnexpectedEof,
+        )));
     }
     let v = match len {
         1 => data[*pos] as u64,
@@ -205,7 +227,12 @@ fn read_bitmap_n(data: &[u8], pos: &mut usize, endianness: Endianness, n: u64) -
     Ok(v)
 }
 
-fn read_i64_slice(data: &[u8], pos: &mut usize, spec: &TypeSpec, endianness: Endianness) -> Result<i64, CodecError> {
+fn read_i64_slice(
+    data: &[u8],
+    pos: &mut usize,
+    spec: &TypeSpec,
+    endianness: Endianness,
+) -> Result<i64, CodecError> {
     match spec {
         TypeSpec::Bitfield(n) => {
             let size = ((*n + 7) / 8) as usize;
@@ -218,7 +245,10 @@ fn read_i64_slice(data: &[u8], pos: &mut usize, spec: &TypeSpec, endianness: End
             let mask = if *n >= 64 { u64::MAX } else { (1u64 << n) - 1 };
             let raw = read_bytes_to_u64(data, pos, size, endianness)? & mask;
             *pos += size;
-            let signed = matches!(bt, BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64);
+            let signed = matches!(
+                bt,
+                BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64
+            );
             let val = if signed && *n > 0 {
                 let sign_bit = 1i64 << (*n as i64 - 1);
                 if (raw as i64) >= sign_bit {
@@ -234,11 +264,19 @@ fn read_i64_slice(data: &[u8], pos: &mut usize, spec: &TypeSpec, endianness: End
         _ => {}
     }
     let (size, signed) = match spec {
-        TypeSpec::Base(bt) => (base_type_size(bt), matches!(bt, BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64)),
+        TypeSpec::Base(bt) => (
+            base_type_size(bt),
+            matches!(
+                bt,
+                BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64
+            ),
+        ),
         _ => return Err(CodecError::Validation("not a numeric type".to_string())),
     };
     if *pos + size > data.len() {
-        return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+        return Err(CodecError::Io(std::io::Error::from(
+            std::io::ErrorKind::UnexpectedEof,
+        )));
     }
     let n = match (size, endianness) {
         (1, _) => data[*pos] as i64,
@@ -254,9 +292,16 @@ fn read_i64_slice(data: &[u8], pos: &mut usize, spec: &TypeSpec, endianness: End
     Ok(if signed { n } else { n as u64 as i64 })
 }
 
-fn read_bytes_to_u64(data: &[u8], pos: &mut usize, len: usize, endianness: Endianness) -> Result<u64, CodecError> {
+fn read_bytes_to_u64(
+    data: &[u8],
+    pos: &mut usize,
+    len: usize,
+    endianness: Endianness,
+) -> Result<u64, CodecError> {
     if *pos + len > data.len() {
-        return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+        return Err(CodecError::Io(std::io::Error::from(
+            std::io::ErrorKind::UnexpectedEof,
+        )));
     }
     let v = match (len, endianness) {
         (1, _) => data[*pos] as u64,
@@ -283,19 +328,24 @@ fn read_bytes_to_u64(data: &[u8], pos: &mut usize, len: usize, endianness: Endia
 fn validate_constraint_raw(value_i64: i64, c: &Constraint) -> Result<(), CodecError> {
     match c {
         Constraint::Range(intervals) => {
-            let in_any = intervals.iter().any(|(min, max)| value_i64 >= *min && value_i64 <= *max);
+            let in_any = intervals
+                .iter()
+                .any(|(min, max)| value_i64 >= *min && value_i64 <= *max);
             if !in_any {
                 return Err(CodecError::Validation(format!(
                     "value {} not in any interval {:?}",
-                    value_i64,
-                    intervals
+                    value_i64, intervals
                 )));
             }
         }
         Constraint::Enum(allowed) => {
-            let ok = allowed.iter().any(|l| l.as_i64() == Some(value_i64));
+            let ok = allowed
+                .iter()
+                .any(|l: &crate::ast::Literal| l.as_i64() == Some(value_i64));
             if !ok {
-                return Err(CodecError::Validation("value not in allowed enum".to_string()));
+                return Err(CodecError::Validation(
+                    "value not in allowed enum".to_string(),
+                ));
             }
         }
     }
@@ -313,11 +363,28 @@ impl WalkContext {
 
 impl<'a> BinaryWalker<'a> {
     pub fn new(data: &'a [u8], resolved: &'a ResolvedProtocol, endianness: Endianness) -> Self {
-        BinaryWalker { data, pos: 0, resolved, endianness, ctx: WalkContext::default() }
+        BinaryWalker {
+            data,
+            pos: 0,
+            resolved,
+            endianness,
+            ctx: WalkContext::default(),
+        }
     }
 
-    pub fn at(data: &'a [u8], start: usize, resolved: &'a ResolvedProtocol, endianness: Endianness) -> Self {
-        BinaryWalker { data, pos: start, resolved, endianness, ctx: WalkContext::default() }
+    pub fn at(
+        data: &'a [u8],
+        start: usize,
+        resolved: &'a ResolvedProtocol,
+        endianness: Endianness,
+    ) -> Self {
+        BinaryWalker {
+            data,
+            pos: start,
+            resolved,
+            endianness,
+            ctx: WalkContext::default(),
+        }
     }
 
     pub fn position(&self) -> usize {
@@ -331,7 +398,10 @@ impl<'a> BinaryWalker<'a> {
     /// Skip one message by structure; returns number of bytes skipped. No allocation.
     pub fn skip_message(&mut self, message_name: &str) -> Result<usize, CodecError> {
         let start = self.pos;
-        let msg = self.resolved.get_message(message_name).ok_or_else(|| CodecError::UnknownStruct(message_name.to_string()))?;
+        let msg = self
+            .resolved
+            .get_message(message_name)
+            .ok_or_else(|| CodecError::UnknownStruct(message_name.to_string()))?;
         self.skip_message_fields(msg.fields.as_slice())?;
         Ok(self.pos - start)
     }
@@ -339,7 +409,10 @@ impl<'a> BinaryWalker<'a> {
     /// Validate current message in place (read only constrained fields, check ranges). No allocation.
     /// Fields whose constraint saturates the type range (flag set on each [`MessageField`](crate::ast::MessageField) at resolve) are skipped without range check.
     pub fn validate_message(&mut self, message_name: &str) -> Result<(), CodecError> {
-        let msg = self.resolved.get_message(message_name).ok_or_else(|| CodecError::UnknownStruct(message_name.to_string()))?;
+        let msg = self
+            .resolved
+            .get_message(message_name)
+            .ok_or_else(|| CodecError::UnknownStruct(message_name.to_string()))?;
         self.validate_and_skip_message_fields(msg.fields.as_slice())?;
         Ok(())
     }
@@ -360,7 +433,10 @@ impl<'a> BinaryWalker<'a> {
 
     /// Validation: for each field we skip (saturating or no constraint) or run range check.
     /// Saturating flag is set on each [`MessageField`](crate::ast::MessageField) at resolve.
-    fn validate_and_skip_message_fields(&mut self, fields: &[MessageField]) -> Result<(), CodecError> {
+    fn validate_and_skip_message_fields(
+        &mut self,
+        fields: &[MessageField],
+    ) -> Result<(), CodecError> {
         for f in fields.iter() {
             if let Some(ref cond) = f.condition {
                 let cond_val = self.ctx.get(cond.field.as_str()).map(|u| u as i64);
@@ -396,14 +472,20 @@ impl<'a> BinaryWalker<'a> {
     /// **Slow path** (run with `--features walk_profile` and see bench walk_validate_pcap hotspot):
     /// **Optional** (~48%), **StructRef** (~34%), **RepList** (~10%); then BitfieldSizedInt, Base.
     /// For walk+validate, **ValidateField** (range/enum check) is a small fraction when most fields are saturating.
-    fn skip_type_spec(&mut self, spec: &TypeSpec, field_name: Option<&str>) -> Result<(), CodecError> {
+    fn skip_type_spec(
+        &mut self,
+        spec: &TypeSpec,
+        field_name: Option<&str>,
+    ) -> Result<(), CodecError> {
         match spec {
             TypeSpec::Base(bt) => {
                 #[cfg(feature = "walk_profile")]
                 let _g = ProfileGuard::new("Base");
                 let n = base_type_size(bt);
                 if self.pos + n > self.data.len() {
-                    return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                    return Err(CodecError::Io(std::io::Error::from(
+                        std::io::ErrorKind::UnexpectedEof,
+                    )));
                 }
                 self.pos += n;
             }
@@ -415,7 +497,9 @@ impl<'a> BinaryWalker<'a> {
                     PaddingKind::Bits(n) => ((*n + 7) / 8) as usize,
                 };
                 if self.pos + byte_len > self.data.len() {
-                    return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                    return Err(CodecError::Io(std::io::Error::from(
+                        std::io::ErrorKind::UnexpectedEof,
+                    )));
                 }
                 self.pos += byte_len;
             }
@@ -428,7 +512,9 @@ impl<'a> BinaryWalker<'a> {
                 #[cfg(feature = "walk_profile")]
                 let _g = ProfileGuard::new("LengthOfCountOf");
                 if self.pos + 4 > self.data.len() {
-                    return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                    return Err(CodecError::Io(std::io::Error::from(
+                        std::io::ErrorKind::UnexpectedEof,
+                    )));
                 }
                 if let Some(name) = field_name {
                     let v = read_u32_slice(self.data, self.pos, self.endianness)?;
@@ -442,15 +528,26 @@ impl<'a> BinaryWalker<'a> {
                 let bitmap = read_bitmap_n(self.data, &mut self.pos, self.endianness, *n)?;
                 self.ctx.presence = WalkPresence::Bitmap(bitmap, 0);
             }
-            TypeSpec::BitmapPresence { total_bits, presence_per_block, .. } => {
+            TypeSpec::BitmapPresence {
+                total_bits,
+                presence_per_block,
+                ..
+            } => {
                 #[cfg(feature = "walk_profile")]
                 let _g = ProfileGuard::new("BitmapPresence");
-                let max_encoded_bits = if *presence_per_block == 0 { *total_bits } else { ((*total_bits + presence_per_block - 1) / presence_per_block) * (presence_per_block + 1) };
+                let max_encoded_bits = if *presence_per_block == 0 {
+                    *total_bits
+                } else {
+                    ((*total_bits + presence_per_block - 1) / presence_per_block)
+                        * (presence_per_block + 1)
+                };
                 let max_bytes = ((max_encoded_bits + 7) / 8) as usize;
                 let mut bytes = Vec::new();
                 if *presence_per_block == 0 {
                     if self.pos + max_bytes > self.data.len() {
-                        return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                        return Err(CodecError::Io(std::io::Error::from(
+                            std::io::ErrorKind::UnexpectedEof,
+                        )));
                     }
                     bytes.extend_from_slice(&self.data[self.pos..self.pos + max_bytes]);
                     self.pos += max_bytes;
@@ -461,7 +558,9 @@ impl<'a> BinaryWalker<'a> {
                     if block_bits >= 8 {
                         for _ in 0..max_blocks {
                             if self.pos >= self.data.len() {
-                                return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                                return Err(CodecError::Io(std::io::Error::from(
+                                    std::io::ErrorKind::UnexpectedEof,
+                                )));
                             }
                             let b = self.data[self.pos];
                             self.pos += 1;
@@ -510,11 +609,16 @@ impl<'a> BinaryWalker<'a> {
                 let _g = ProfileGuard::new("StructRef");
                 if self.resolved.get_enum(name).is_some() {
                     if self.pos + 1 > self.data.len() {
-                        return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                        return Err(CodecError::Io(std::io::Error::from(
+                            std::io::ErrorKind::UnexpectedEof,
+                        )));
                     }
                     self.pos += 1;
                 } else {
-                    let s = self.resolved.get_struct(name).ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
+                    let s = self
+                        .resolved
+                        .get_struct(name)
+                        .ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
                     self.skip_struct_fields(s.fields.as_slice())?;
                 }
             }
@@ -523,7 +627,10 @@ impl<'a> BinaryWalker<'a> {
                 let _g = ProfileGuard::new("Array");
                 let n = match len {
                     ArrayLen::Constant(k) => *k,
-                    ArrayLen::FieldRef(field) => self.ctx.get(field).ok_or_else(|| CodecError::UnknownField(field.clone()))?,
+                    ArrayLen::FieldRef(field) => self
+                        .ctx
+                        .get(field)
+                        .ok_or_else(|| CodecError::UnknownField(field.clone()))?,
                 };
                 for _ in 0..n {
                     self.skip_type_spec(elem, None)?;
@@ -533,7 +640,9 @@ impl<'a> BinaryWalker<'a> {
                 #[cfg(feature = "walk_profile")]
                 let _g = ProfileGuard::new("List");
                 if self.pos + 4 > self.data.len() {
-                    return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                    return Err(CodecError::Io(std::io::Error::from(
+                        std::io::ErrorKind::UnexpectedEof,
+                    )));
                 }
                 let n = read_u32_slice(self.data, self.pos, self.endianness)?;
                 self.pos += 4;
@@ -545,7 +654,9 @@ impl<'a> BinaryWalker<'a> {
                 #[cfg(feature = "walk_profile")]
                 let _g = ProfileGuard::new("RepList");
                 if self.pos + 1 > self.data.len() {
-                    return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                    return Err(CodecError::Io(std::io::Error::from(
+                        std::io::ErrorKind::UnexpectedEof,
+                    )));
                 }
                 let n = self.data[self.pos] as u32;
                 self.pos += 1;
@@ -574,7 +685,8 @@ impl<'a> BinaryWalker<'a> {
                         bit != 0
                     }
                     WalkPresence::BitmapPresenceConsecutive(bytes, byte_idx, bit_offset) => {
-                        let present = *byte_idx < bytes.len() && ((bytes[*byte_idx] >> (7 - *bit_offset)) & 1) != 0;
+                        let present = *byte_idx < bytes.len()
+                            && ((bytes[*byte_idx] >> (7 - *bit_offset)) & 1) != 0;
                         if *bit_offset == 7 {
                             *byte_idx += 1;
                             *bit_offset = 0;
@@ -588,7 +700,11 @@ impl<'a> BinaryWalker<'a> {
                         let byte_idx = *i / bits_per_block;
                         let bit_idx = *i % bits_per_block;
                         *i += 1;
-                        let bit = if byte_idx < bytes.len() { (bytes[byte_idx] >> (7 - bit_idx)) & 1 } else { 0 };
+                        let bit = if byte_idx < bytes.len() {
+                            (bytes[byte_idx] >> (7 - bit_idx)) & 1
+                        } else {
+                            0
+                        };
                         bit != 0
                     }
                     WalkPresence::None => read_u8(self.data, &mut self.pos)? != 0,
@@ -618,11 +734,28 @@ impl<'a> BinaryWalker<'a> {
 
 impl<'a> BinaryWalkerMut<'a> {
     pub fn new(data: &'a mut [u8], resolved: &'a ResolvedProtocol, endianness: Endianness) -> Self {
-        BinaryWalkerMut { data, pos: 0, resolved, endianness, ctx: WalkContext::default() }
+        BinaryWalkerMut {
+            data,
+            pos: 0,
+            resolved,
+            endianness,
+            ctx: WalkContext::default(),
+        }
     }
 
-    pub fn at(data: &'a mut [u8], start: usize, resolved: &'a ResolvedProtocol, endianness: Endianness) -> Self {
-        BinaryWalkerMut { data, pos: start, resolved, endianness, ctx: WalkContext::default() }
+    pub fn at(
+        data: &'a mut [u8],
+        start: usize,
+        resolved: &'a ResolvedProtocol,
+        endianness: Endianness,
+    ) -> Self {
+        BinaryWalkerMut {
+            data,
+            pos: start,
+            resolved,
+            endianness,
+            ctx: WalkContext::default(),
+        }
     }
 
     pub fn position(&self) -> usize {
@@ -631,7 +764,10 @@ impl<'a> BinaryWalkerMut<'a> {
 
     /// Zero all padding and reserved fields in one message, in place. No other allocation.
     pub fn zero_padding_reserved_message(&mut self, message_name: &str) -> Result<(), CodecError> {
-        let msg = self.resolved.get_message(message_name).ok_or_else(|| CodecError::UnknownStruct(message_name.to_string()))?;
+        let msg = self
+            .resolved
+            .get_message(message_name)
+            .ok_or_else(|| CodecError::UnknownStruct(message_name.to_string()))?;
         self.zero_padding_reserved_message_fields(msg.fields.as_slice())?;
         Ok(())
     }
@@ -639,12 +775,18 @@ impl<'a> BinaryWalkerMut<'a> {
     /// One-pass validate and zero: for each field, validate constrained non-saturating fields and zero padding; returns bytes consumed.
     pub fn validate_and_zero_message(&mut self, message_name: &str) -> Result<usize, CodecError> {
         let start = self.pos;
-        let msg = self.resolved.get_message(message_name).ok_or_else(|| CodecError::UnknownStruct(message_name.to_string()))?;
+        let msg = self
+            .resolved
+            .get_message(message_name)
+            .ok_or_else(|| CodecError::UnknownStruct(message_name.to_string()))?;
         self.validate_and_zero_message_fields(msg.fields.as_slice())?;
         Ok(self.pos - start)
     }
 
-    fn validate_and_zero_message_fields(&mut self, fields: &[MessageField]) -> Result<(), CodecError> {
+    fn validate_and_zero_message_fields(
+        &mut self,
+        fields: &[MessageField],
+    ) -> Result<(), CodecError> {
         for f in fields.iter() {
             if let Some(ref cond) = f.condition {
                 let cond_val = self.ctx.get(cond.field.as_str()).map(|u| u as i64);
@@ -676,12 +818,18 @@ impl<'a> BinaryWalkerMut<'a> {
     /// Skip one message (same as BinaryWalker).
     pub fn skip_message(&mut self, message_name: &str) -> Result<usize, CodecError> {
         let start = self.pos;
-        let msg = self.resolved.get_message(message_name).ok_or_else(|| CodecError::UnknownStruct(message_name.to_string()))?;
+        let msg = self
+            .resolved
+            .get_message(message_name)
+            .ok_or_else(|| CodecError::UnknownStruct(message_name.to_string()))?;
         self.skip_message_fields(msg.fields.as_slice())?;
         Ok(self.pos - start)
     }
 
-    fn zero_padding_reserved_message_fields(&mut self, fields: &[MessageField]) -> Result<(), CodecError> {
+    fn zero_padding_reserved_message_fields(
+        &mut self,
+        fields: &[MessageField],
+    ) -> Result<(), CodecError> {
         for f in fields {
             if let Some(ref cond) = f.condition {
                 let cond_val = self.ctx.get(cond.field.as_str()).map(|u| u as i64);
@@ -695,7 +843,11 @@ impl<'a> BinaryWalkerMut<'a> {
         Ok(())
     }
 
-    fn zero_or_skip_type_spec(&mut self, spec: &TypeSpec, field_name: Option<&str>) -> Result<(), CodecError> {
+    fn zero_or_skip_type_spec(
+        &mut self,
+        spec: &TypeSpec,
+        field_name: Option<&str>,
+    ) -> Result<(), CodecError> {
         match spec {
             TypeSpec::Padding(kind) => {
                 let byte_len = match kind {
@@ -703,7 +855,9 @@ impl<'a> BinaryWalkerMut<'a> {
                     PaddingKind::Bits(n) => ((*n + 7) / 8) as usize,
                 };
                 if self.pos + byte_len > self.data.len() {
-                    return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                    return Err(CodecError::Io(std::io::Error::from(
+                        std::io::ErrorKind::UnexpectedEof,
+                    )));
                 }
                 self.data[self.pos..self.pos + byte_len].fill(0);
                 self.pos += byte_len;
@@ -713,7 +867,9 @@ impl<'a> BinaryWalkerMut<'a> {
             }
             TypeSpec::LengthOf(_) | TypeSpec::CountOf(_) => {
                 if self.pos + 4 > self.data.len() {
-                    return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                    return Err(CodecError::Io(std::io::Error::from(
+                        std::io::ErrorKind::UnexpectedEof,
+                    )));
                 }
                 if let Some(name) = field_name {
                     let v = read_u32_slice(self.data, self.pos, self.endianness)?;
@@ -725,13 +881,24 @@ impl<'a> BinaryWalkerMut<'a> {
                 let bitmap = read_bitmap_n(self.data, &mut self.pos, self.endianness, *n)?;
                 self.ctx.presence = WalkPresence::Bitmap(bitmap, 0);
             }
-            TypeSpec::BitmapPresence { total_bits, presence_per_block, .. } => {
-                let max_encoded_bits = if *presence_per_block == 0 { *total_bits } else { ((*total_bits + presence_per_block - 1) / presence_per_block) * (presence_per_block + 1) };
+            TypeSpec::BitmapPresence {
+                total_bits,
+                presence_per_block,
+                ..
+            } => {
+                let max_encoded_bits = if *presence_per_block == 0 {
+                    *total_bits
+                } else {
+                    ((*total_bits + presence_per_block - 1) / presence_per_block)
+                        * (presence_per_block + 1)
+                };
                 let max_bytes = ((max_encoded_bits + 7) / 8) as usize;
                 let mut bytes = Vec::new();
                 if *presence_per_block == 0 {
                     if self.pos + max_bytes > self.data.len() {
-                        return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                        return Err(CodecError::Io(std::io::Error::from(
+                            std::io::ErrorKind::UnexpectedEof,
+                        )));
                     }
                     bytes.extend_from_slice(&self.data[self.pos..self.pos + max_bytes]);
                     self.pos += max_bytes;
@@ -742,7 +909,9 @@ impl<'a> BinaryWalkerMut<'a> {
                     if block_bits >= 8 {
                         for _ in 0..max_blocks {
                             if self.pos >= self.data.len() {
-                                return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                                return Err(CodecError::Io(std::io::Error::from(
+                                    std::io::ErrorKind::UnexpectedEof,
+                                )));
                             }
                             let b = self.data[self.pos];
                             self.pos += 1;
@@ -793,7 +962,10 @@ impl<'a> BinaryWalkerMut<'a> {
                     }
                     self.pos += 1;
                 } else {
-                    let s = self.resolved.get_struct(name).ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
+                    let s = self
+                        .resolved
+                        .get_struct(name)
+                        .ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
                     for f in &s.fields {
                         if let Some(ref cond) = f.condition {
                             let cond_val = self.ctx.get(cond.field.as_str()).map(|u| u as i64);
@@ -809,7 +981,10 @@ impl<'a> BinaryWalkerMut<'a> {
             TypeSpec::Array(elem, len) => {
                 let n = match len {
                     ArrayLen::Constant(k) => *k,
-                    ArrayLen::FieldRef(field) => self.ctx.get(field).ok_or_else(|| CodecError::UnknownField(field.clone()))?,
+                    ArrayLen::FieldRef(field) => self
+                        .ctx
+                        .get(field)
+                        .ok_or_else(|| CodecError::UnknownField(field.clone()))?,
                 };
                 for _ in 0..n {
                     self.zero_or_skip_type_spec(elem, None)?;
@@ -817,7 +992,9 @@ impl<'a> BinaryWalkerMut<'a> {
             }
             TypeSpec::List(elem) => {
                 if self.pos + 4 > self.data.len() {
-                    return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                    return Err(CodecError::Io(std::io::Error::from(
+                        std::io::ErrorKind::UnexpectedEof,
+                    )));
                 }
                 let n = read_u32_slice(self.data, self.pos, self.endianness)?;
                 self.pos += 4;
@@ -827,7 +1004,9 @@ impl<'a> BinaryWalkerMut<'a> {
             }
             TypeSpec::RepList(elem) => {
                 if self.pos + 1 > self.data.len() {
-                    return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                    return Err(CodecError::Io(std::io::Error::from(
+                        std::io::ErrorKind::UnexpectedEof,
+                    )));
                 }
                 let n = self.data[self.pos] as usize;
                 self.pos += 1;
@@ -852,7 +1031,8 @@ impl<'a> BinaryWalkerMut<'a> {
                         bit != 0
                     }
                     WalkPresence::BitmapPresenceConsecutive(bytes, byte_idx, bit_offset) => {
-                        let present = *byte_idx < bytes.len() && ((bytes[*byte_idx] >> (7 - *bit_offset)) & 1) != 0;
+                        let present = *byte_idx < bytes.len()
+                            && ((bytes[*byte_idx] >> (7 - *bit_offset)) & 1) != 0;
                         if *bit_offset == 7 {
                             *byte_idx += 1;
                             *bit_offset = 0;
@@ -866,7 +1046,11 @@ impl<'a> BinaryWalkerMut<'a> {
                         let byte_idx = *i / bits_per_block;
                         let bit_idx = *i % bits_per_block;
                         *i += 1;
-                        let bit = if byte_idx < bytes.len() { (bytes[byte_idx] >> (7 - bit_idx)) & 1 } else { 0 };
+                        let bit = if byte_idx < bytes.len() {
+                            (bytes[byte_idx] >> (7 - bit_idx)) & 1
+                        } else {
+                            0
+                        };
                         bit != 0
                     }
                     WalkPresence::None => read_u8(self.data, &mut self.pos)? != 0,
@@ -879,12 +1063,18 @@ impl<'a> BinaryWalkerMut<'a> {
         Ok(())
     }
 
-    fn skip_type_spec(&mut self, spec: &TypeSpec, field_name: Option<&str>) -> Result<(), CodecError> {
+    fn skip_type_spec(
+        &mut self,
+        spec: &TypeSpec,
+        field_name: Option<&str>,
+    ) -> Result<(), CodecError> {
         match spec {
             TypeSpec::Base(bt) => {
                 let n = base_type_size(bt);
                 if self.pos + n > self.data.len() {
-                    return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                    return Err(CodecError::Io(std::io::Error::from(
+                        std::io::ErrorKind::UnexpectedEof,
+                    )));
                 }
                 self.pos += n;
             }
@@ -896,7 +1086,9 @@ impl<'a> BinaryWalkerMut<'a> {
                     PaddingKind::Bits(n) => ((*n + 7) / 8) as usize,
                 };
                 if self.pos + byte_len > self.data.len() {
-                    return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                    return Err(CodecError::Io(std::io::Error::from(
+                        std::io::ErrorKind::UnexpectedEof,
+                    )));
                 }
                 self.pos += byte_len;
             }
@@ -909,7 +1101,9 @@ impl<'a> BinaryWalkerMut<'a> {
                 #[cfg(feature = "walk_profile")]
                 let _g = ProfileGuard::new("LengthOfCountOf");
                 if self.pos + 4 > self.data.len() {
-                    return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                    return Err(CodecError::Io(std::io::Error::from(
+                        std::io::ErrorKind::UnexpectedEof,
+                    )));
                 }
                 if let Some(name) = field_name {
                     let v = read_u32_slice(self.data, self.pos, self.endianness)?;
@@ -923,15 +1117,26 @@ impl<'a> BinaryWalkerMut<'a> {
                 let bitmap = read_bitmap_n(self.data, &mut self.pos, self.endianness, *n)?;
                 self.ctx.presence = WalkPresence::Bitmap(bitmap, 0);
             }
-            TypeSpec::BitmapPresence { total_bits, presence_per_block, .. } => {
+            TypeSpec::BitmapPresence {
+                total_bits,
+                presence_per_block,
+                ..
+            } => {
                 #[cfg(feature = "walk_profile")]
                 let _g = ProfileGuard::new("BitmapPresence");
-                let max_encoded_bits = if *presence_per_block == 0 { *total_bits } else { ((*total_bits + presence_per_block - 1) / presence_per_block) * (presence_per_block + 1) };
+                let max_encoded_bits = if *presence_per_block == 0 {
+                    *total_bits
+                } else {
+                    ((*total_bits + presence_per_block - 1) / presence_per_block)
+                        * (presence_per_block + 1)
+                };
                 let max_bytes = ((max_encoded_bits + 7) / 8) as usize;
                 let mut bytes = Vec::new();
                 if *presence_per_block == 0 {
                     if self.pos + max_bytes > self.data.len() {
-                        return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                        return Err(CodecError::Io(std::io::Error::from(
+                            std::io::ErrorKind::UnexpectedEof,
+                        )));
                     }
                     bytes.extend_from_slice(&self.data[self.pos..self.pos + max_bytes]);
                     self.pos += max_bytes;
@@ -942,7 +1147,9 @@ impl<'a> BinaryWalkerMut<'a> {
                     if block_bits >= 8 {
                         for _ in 0..max_blocks {
                             if self.pos >= self.data.len() {
-                                return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                                return Err(CodecError::Io(std::io::Error::from(
+                                    std::io::ErrorKind::UnexpectedEof,
+                                )));
                             }
                             let b = self.data[self.pos];
                             self.pos += 1;
@@ -989,11 +1196,19 @@ impl<'a> BinaryWalkerMut<'a> {
             TypeSpec::StructRef(name) => {
                 if self.resolved.get_enum(name).is_some() {
                     if self.pos + 1 > self.data.len() {
-                        return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                        return Err(CodecError::Io(std::io::Error::from(
+                            std::io::ErrorKind::UnexpectedEof,
+                        )));
                     }
                     let byte = self.data[self.pos] as i64;
                     let enum_sec = self.resolved.get_enum(name).unwrap();
-                    let ok = enum_sec.variants.iter().any(|(_, lit)| lit.as_i64() == Some(byte));
+                    let mut ok = false;
+                    for (_, lit) in &enum_sec.variants {
+                        if lit.as_i64() == Some(byte) {
+                            ok = true;
+                            break;
+                        }
+                    }
                     if !ok {
                         return Err(CodecError::Validation(format!(
                             "enum {}: value {} not in allowed set",
@@ -1002,7 +1217,10 @@ impl<'a> BinaryWalkerMut<'a> {
                     }
                     self.pos += 1;
                 } else {
-                    let s = self.resolved.get_struct(name).ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
+                    let s = self
+                        .resolved
+                        .get_struct(name)
+                        .ok_or_else(|| CodecError::UnknownStruct(name.clone()))?;
                     for f in &s.fields {
                         if let Some(ref cond) = f.condition {
                             let cond_val = self.ctx.get(cond.field.as_str()).map(|u| u as i64);
@@ -1018,7 +1236,10 @@ impl<'a> BinaryWalkerMut<'a> {
             TypeSpec::Array(elem, len) => {
                 let n = match len {
                     ArrayLen::Constant(k) => *k,
-                    ArrayLen::FieldRef(field) => self.ctx.get(field).ok_or_else(|| CodecError::UnknownField(field.clone()))?,
+                    ArrayLen::FieldRef(field) => self
+                        .ctx
+                        .get(field)
+                        .ok_or_else(|| CodecError::UnknownField(field.clone()))?,
                 };
                 for _ in 0..n {
                     self.skip_type_spec(elem, None)?;
@@ -1026,7 +1247,9 @@ impl<'a> BinaryWalkerMut<'a> {
             }
             TypeSpec::List(elem) => {
                 if self.pos + 4 > self.data.len() {
-                    return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                    return Err(CodecError::Io(std::io::Error::from(
+                        std::io::ErrorKind::UnexpectedEof,
+                    )));
                 }
                 let n = read_u32_slice(self.data, self.pos, self.endianness)?;
                 self.pos += 4;
@@ -1036,7 +1259,9 @@ impl<'a> BinaryWalkerMut<'a> {
             }
             TypeSpec::RepList(elem) => {
                 if self.pos + 1 > self.data.len() {
-                    return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+                    return Err(CodecError::Io(std::io::Error::from(
+                        std::io::ErrorKind::UnexpectedEof,
+                    )));
                 }
                 let n = self.data[self.pos] as u32;
                 self.pos += 1;
@@ -1061,7 +1286,8 @@ impl<'a> BinaryWalkerMut<'a> {
                         bit != 0
                     }
                     WalkPresence::BitmapPresenceConsecutive(bytes, byte_idx, bit_offset) => {
-                        let present = *byte_idx < bytes.len() && ((bytes[*byte_idx] >> (7 - *bit_offset)) & 1) != 0;
+                        let present = *byte_idx < bytes.len()
+                            && ((bytes[*byte_idx] >> (7 - *bit_offset)) & 1) != 0;
                         if *bit_offset == 7 {
                             *byte_idx += 1;
                             *bit_offset = 0;
@@ -1075,7 +1301,11 @@ impl<'a> BinaryWalkerMut<'a> {
                         let byte_idx = *i / bits_per_block;
                         let bit_idx = *i % bits_per_block;
                         *i += 1;
-                        let bit = if byte_idx < bytes.len() { (bytes[byte_idx] >> (7 - bit_idx)) & 1 } else { 0 };
+                        let bit = if byte_idx < bytes.len() {
+                            (bytes[byte_idx] >> (7 - bit_idx)) & 1
+                        } else {
+                            0
+                        };
                         bit != 0
                     }
                     WalkPresence::None => read_u8(self.data, &mut self.pos)? != 0,
@@ -1188,9 +1418,16 @@ pub fn remove_message_in_place(buffer: &mut [u8], start: usize, len: usize) -> u
 ///
 /// Typical use: after [`remove_message_in_place`], update a length or count field
 /// in the frame header so the remaining buffer describes the new size.
-pub fn write_u32_in_place(buffer: &mut [u8], offset: usize, value: u32, endianness: Endianness) -> Result<(), CodecError> {
+pub fn write_u32_in_place(
+    buffer: &mut [u8],
+    offset: usize,
+    value: u32,
+    endianness: Endianness,
+) -> Result<(), CodecError> {
     if offset + 4 > buffer.len() {
-        return Err(CodecError::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+        return Err(CodecError::Io(std::io::Error::from(
+            std::io::ErrorKind::UnexpectedEof,
+        )));
     }
     match endianness {
         Endianness::Big => BigEndian::write_u32(&mut buffer[offset..], value),
@@ -1251,7 +1488,10 @@ struct ProfileGuard {
 #[cfg(feature = "walk_profile")]
 impl ProfileGuard {
     fn new(label: &'static str) -> Self {
-        Self { label, start: Instant::now() }
+        Self {
+            label,
+            start: Instant::now(),
+        }
     }
 }
 

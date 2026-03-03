@@ -45,13 +45,7 @@ fn print_message(path: &str, m: &LintMessage, style: OutputStyle) {
             );
         }
         OutputStyle::Human => {
-            println!(
-                "  {} {}:{}: {}",
-                path,
-                m.line,
-                m.column,
-                m.message
-            );
+            println!("  {} {}:{}: {}", path, m.line, m.column, m.message);
             println!("    rule: {}", rule_id(m.rule));
         }
     }

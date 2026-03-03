@@ -153,8 +153,16 @@ fn optional_absent(decoded: &HashMap<String, Value>, name: &str) -> bool {
 fn vals_2_7(a: Option<u8>, b: Option<u8>) -> HashMap<String, Value> {
     let mut v = HashMap::new();
     v.insert("fspec".to_string(), Value::Bytes(vec![]));
-    v.insert("a".to_string(), a.map(|x| Value::List(vec![Value::U8(x)])).unwrap_or(Value::List(vec![])));
-    v.insert("b".to_string(), b.map(|x| Value::List(vec![Value::U8(x)])).unwrap_or(Value::List(vec![])));
+    v.insert(
+        "a".to_string(),
+        a.map(|x| Value::List(vec![Value::U8(x)]))
+            .unwrap_or(Value::List(vec![])),
+    );
+    v.insert(
+        "b".to_string(),
+        b.map(|x| Value::List(vec![Value::U8(x)]))
+            .unwrap_or(Value::List(vec![])),
+    );
     v
 }
 
@@ -164,7 +172,11 @@ fn vals_7_7_one_present(bit_index: usize, value: u8) -> HashMap<String, Value> {
     let mut v = HashMap::new();
     v.insert("fspec".to_string(), Value::Bytes(vec![]));
     for (i, &n) in names.iter().enumerate() {
-        let val = if i == bit_index { Value::List(vec![Value::U8(value)]) } else { Value::List(vec![]) };
+        let val = if i == bit_index {
+            Value::List(vec![Value::U8(value)])
+        } else {
+            Value::List(vec![])
+        };
         v.insert(n.to_string(), val);
     }
     v
@@ -193,8 +205,12 @@ fn bitmap_presence_decode_one_byte_fx0_all_absent() {
     let codec = Codec::new(resolved, Endianness::Big);
     // 1 byte 0x00: all 7 presence bits 0, FX=0 → stop. Optionals 0–6 and 7–13 all absent.
     let payload: Vec<u8> = vec![0x00, 0x99]; // 0x99 is first byte of next field if we over-read; we must not consume it
-    let decoded = codec.decode_message("Bitmap14_7", &payload).expect("decode");
-    for name in ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n"] {
+    let decoded = codec
+        .decode_message("Bitmap14_7", &payload)
+        .expect("decode");
+    for name in [
+        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n",
+    ] {
         assert!(optional_absent(&decoded, name), "{} should be absent", name);
     }
     // Decoder must consume only 1 byte of FSPEC
@@ -209,9 +225,13 @@ fn bitmap_presence_decode_one_byte_fx0_first_present() {
     let codec = Codec::new(resolved, Endianness::Big);
     // 0x80 = bit 7 set (optional 0 = "a"), FX=0. Then one u8 for optional 0.
     let payload: Vec<u8> = vec![0x80, 42];
-    let decoded = codec.decode_message("Bitmap14_7", &payload).expect("decode");
+    let decoded = codec
+        .decode_message("Bitmap14_7", &payload)
+        .expect("decode");
     assert_eq!(optional_u8(&decoded, "a"), Some(42));
-    for name in ["b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n"] {
+    for name in [
+        "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n",
+    ] {
         assert!(optional_absent(&decoded, name), "{} should be absent", name);
     }
 }
@@ -223,13 +243,19 @@ fn bitmap_presence_decode_one_byte_fx0_all_seven_present() {
     let codec = Codec::new(resolved, Endianness::Big);
     // 0xFE: 7 presence bits set, FX=0. Then 7 × u8.
     let payload: Vec<u8> = vec![0xFE, 10, 11, 12, 13, 14, 15, 16];
-    let decoded = codec.decode_message("Bitmap14_7", &payload).expect("decode");
+    let decoded = codec
+        .decode_message("Bitmap14_7", &payload)
+        .expect("decode");
     let names = ["a", "b", "c", "d", "e", "f", "g"];
     for (i, &n) in names.iter().enumerate() {
         assert_eq!(optional_u8(&decoded, n), Some(10 + i as u8), "{}", n);
     }
     for name in ["h", "i", "j", "k", "l", "m", "n"] {
-        assert!(optional_absent(&decoded, name), "{} should be absent (implicit after 1-byte FSPEC)", name);
+        assert!(
+            optional_absent(&decoded, name),
+            "{} should be absent (implicit after 1-byte FSPEC)",
+            name
+        );
     }
 }
 
@@ -244,9 +270,13 @@ fn bitmap_presence_decode_two_bytes_first_optional_present() {
     let resolved = resolve(BITMAP_14_7);
     let codec = Codec::new(resolved, Endianness::Big);
     let payload: Vec<u8> = vec![0x81, 0x00, 100];
-    let decoded = codec.decode_message("Bitmap14_7", &payload).expect("decode");
+    let decoded = codec
+        .decode_message("Bitmap14_7", &payload)
+        .expect("decode");
     assert_eq!(optional_u8(&decoded, "a"), Some(100));
-    for name in ["b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n"] {
+    for name in [
+        "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n",
+    ] {
         assert!(optional_absent(&decoded, name), "{} should be absent", name);
     }
 }
@@ -258,7 +288,9 @@ fn bitmap_presence_decode_two_bytes_eight_present() {
     let resolved = resolve(BITMAP_14_7);
     let codec = Codec::new(resolved, Endianness::Big);
     let payload: Vec<u8> = vec![0xFF, 0x80, 1, 2, 3, 4, 5, 6, 7, 8];
-    let decoded = codec.decode_message("Bitmap14_7", &payload).expect("decode");
+    let decoded = codec
+        .decode_message("Bitmap14_7", &payload)
+        .expect("decode");
     for (i, name) in ["a", "b", "c", "d", "e", "f", "g", "h"].iter().enumerate() {
         assert_eq!(optional_u8(&decoded, name), Some(1 + i as u8), "{}", name);
     }
@@ -291,8 +323,13 @@ fn bitmap_presence_encode_all_absent_one_byte() {
 fn bitmap_presence_encode_first_present_one_byte() {
     let resolved = resolve(BITMAP_2_7);
     let codec = Codec::new(resolved, Endianness::Big);
-    let encoded = codec.encode_message("Bitmap2_7", &vals_2_7(Some(33), None)).expect("encode");
-    assert_eq!(encoded[0], 0x80, "bit 7 = first optional present, FX=0 in bit 0");
+    let encoded = codec
+        .encode_message("Bitmap2_7", &vals_2_7(Some(33), None))
+        .expect("encode");
+    assert_eq!(
+        encoded[0], 0x80,
+        "bit 7 = first optional present, FX=0 in bit 0"
+    );
     assert_eq!(encoded.len(), 2, "1 byte FSPEC + 1 byte value for a");
 }
 
@@ -301,7 +338,9 @@ fn bitmap_presence_encode_first_present_one_byte() {
 fn bitmap_presence_encode_all_seven_present_one_byte() {
     let resolved = resolve(BITMAP_7_7);
     let codec = Codec::new(resolved, Endianness::Big);
-    let encoded = codec.encode_message("Bitmap7_7", &vals_7_7_all_present([1, 2, 3, 4, 5, 6, 7])).expect("encode");
+    let encoded = codec
+        .encode_message("Bitmap7_7", &vals_7_7_all_present([1, 2, 3, 4, 5, 6, 7]))
+        .expect("encode");
     assert_eq!(encoded[0], 0xFE, "bits 7–1 set, FX=0");
     assert_eq!(encoded.len(), 1 + 7, "1 FSPEC + 7 u8");
 }
@@ -317,13 +356,25 @@ fn bitmap_presence_encode_eight_present_two_bytes() {
     let codec = Codec::new(resolved, Endianness::Big);
     let mut v = HashMap::new();
     v.insert("fspec".to_string(), Value::Bytes(vec![]));
-    for (i, n) in ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n"].iter().enumerate() {
-        let val = if i < 8 { Value::List(vec![Value::U8(i as u8)]) } else { Value::List(vec![]) };
+    for (i, n) in [
+        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let val = if i < 8 {
+            Value::List(vec![Value::U8(i as u8)])
+        } else {
+            Value::List(vec![])
+        };
         v.insert((*n).to_string(), val);
     }
     let encoded = codec.encode_message("Bitmap14_7", &v).expect("encode");
     assert_eq!(encoded[0], 0xFF, "first block: all 7 present + FX=1");
-    assert_eq!(encoded[1], 0x80, "second block: optional 7 (bit 7) present, FX=0");
+    assert_eq!(
+        encoded[1], 0x80,
+        "second block: optional 7 (bit 7) present, FX=0"
+    );
     assert_eq!(encoded.len(), 2 + 8, "2 FSPEC + 8 u8");
 }
 
@@ -368,7 +419,9 @@ fn bitmap_presence_roundtrip_14_7_one_byte_fspec() {
         v.insert(n.to_string(), Value::List(vec![]));
     }
     let encoded = codec.encode_message("Bitmap14_7", &v).expect("encode");
-    let decoded = codec.decode_message("Bitmap14_7", &encoded).expect("decode");
+    let decoded = codec
+        .decode_message("Bitmap14_7", &encoded)
+        .expect("decode");
     assert_eq!(optional_u8(&decoded, "a"), Some(1));
     assert_eq!(optional_u8(&decoded, "b"), Some(2));
     assert_eq!(optional_u8(&decoded, "c"), Some(3));
@@ -391,7 +444,10 @@ fn bitmap_presence_encode_bit_order_optional_1() {
     let encoded = codec.encode_message("Bitmap7_7", &v).expect("encode");
     // Optional 1 → bit 6 set → 0x40 would be bit 7. Bit 6 = 0x02... no. (byte >> (7-j)) for j=1 → bit 6 → 1<<6 = 0x40. So 0x40 in bits 7..1.
     // Actually: bit 7 = optional 0, bit 6 = optional 1. So optional 1 present => 0x40 (bit 6 set in bits 7-1). 0x40 + FX=0 => 0x40.
-    assert_eq!(encoded[0], 0x40, "optional 1 present => bit 6 set => 0x40 (FX=0)");
+    assert_eq!(
+        encoded[0], 0x40,
+        "optional 1 present => bit 6 set => 0x40 (FX=0)"
+    );
 }
 
 /// **Behaviour**: Optional 0 present → bit 7 set → 0x80 in bits 7–1, FX=0 → 0x80.
@@ -401,7 +457,10 @@ fn bitmap_presence_encode_bit_order_optional_0() {
     let codec = Codec::new(resolved, Endianness::Big);
     let v = vals_7_7_one_present(0, 50);
     let encoded = codec.encode_message("Bitmap7_7", &v).expect("encode");
-    assert_eq!(encoded[0], 0x80, "optional 0 present => bit 7 set => 0x80 (FX=0)");
+    assert_eq!(
+        encoded[0], 0x80,
+        "optional 0 present => bit 7 set => 0x80 (FX=0)"
+    );
 }
 
 // -----------------------------------------------------------------------------
@@ -414,9 +473,14 @@ fn bitmap_28_7_decode_one_block() {
     let resolved = resolve(BITMAP_28_7);
     let codec = Codec::new(resolved, Endianness::Big);
     let payload: Vec<u8> = vec![0x80, 77]; // 1 byte FSPEC: optional 0 present, FX=0
-    let decoded = codec.decode_message("Bitmap28_7", &payload).expect("decode");
+    let decoded = codec
+        .decode_message("Bitmap28_7", &payload)
+        .expect("decode");
     assert_eq!(optional_u8(&decoded, "a"), Some(77));
-    for name in ["b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "aa", "ab"] {
+    for name in [
+        "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s",
+        "t", "u", "v", "w", "x", "y", "z", "aa", "ab",
+    ] {
         assert!(optional_absent(&decoded, name), "{} should be absent", name);
     }
     let (consumed, _) = codec.decode_message_with_extent("Bitmap28_7", &payload);
@@ -429,9 +493,14 @@ fn bitmap_28_7_decode_two_blocks() {
     let resolved = resolve(BITMAP_28_7);
     let codec = Codec::new(resolved, Endianness::Big);
     let payload: Vec<u8> = vec![0x81, 0x00, 77];
-    let decoded = codec.decode_message("Bitmap28_7", &payload).expect("decode");
+    let decoded = codec
+        .decode_message("Bitmap28_7", &payload)
+        .expect("decode");
     assert_eq!(optional_u8(&decoded, "a"), Some(77));
-    for name in ["b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "aa", "ab"] {
+    for name in [
+        "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s",
+        "t", "u", "v", "w", "x", "y", "z", "aa", "ab",
+    ] {
         assert!(optional_absent(&decoded, name), "{} should be absent", name);
     }
     let (consumed, _) = codec.decode_message_with_extent("Bitmap28_7", &payload);
@@ -445,9 +514,14 @@ fn bitmap_28_7_decode_three_blocks() {
     let codec = Codec::new(resolved, Endianness::Big);
     // 0x81 = opt0 present, FX=1; 0x01 = no optionals in block 1, FX=1; 0x00 = FX=0. Then one u8.
     let payload: Vec<u8> = vec![0x81, 0x01, 0x00, 99];
-    let decoded = codec.decode_message("Bitmap28_7", &payload).expect("decode");
+    let decoded = codec
+        .decode_message("Bitmap28_7", &payload)
+        .expect("decode");
     assert_eq!(optional_u8(&decoded, "a"), Some(99));
-    for name in ["b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "aa", "ab"] {
+    for name in [
+        "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s",
+        "t", "u", "v", "w", "x", "y", "z", "aa", "ab",
+    ] {
         assert!(optional_absent(&decoded, name), "{} should be absent", name);
     }
     let (consumed, _) = codec.decode_message_with_extent("Bitmap28_7", &payload);
@@ -461,9 +535,14 @@ fn bitmap_28_7_decode_four_blocks() {
     let codec = Codec::new(resolved, Endianness::Big);
     // 4 bytes: opt0 present in block 0, FX=1; blocks 1,2,3 all absent (0x01, 0x01, 0x00). Then one u8.
     let payload: Vec<u8> = vec![0x81, 0x01, 0x01, 0x00, 42];
-    let decoded = codec.decode_message("Bitmap28_7", &payload).expect("decode");
+    let decoded = codec
+        .decode_message("Bitmap28_7", &payload)
+        .expect("decode");
     assert_eq!(optional_u8(&decoded, "a"), Some(42));
-    for name in ["b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "aa", "ab"] {
+    for name in [
+        "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s",
+        "t", "u", "v", "w", "x", "y", "z", "aa", "ab",
+    ] {
         assert!(optional_absent(&decoded, name), "{} should be absent", name);
     }
     let (consumed, _) = codec.decode_message_with_extent("Bitmap28_7", &payload);
@@ -480,14 +559,17 @@ fn bitmap_14_3_decode_one_byte_fx0_all_absent() {
     let resolved = resolve(BITMAP_14_3);
     let codec = Codec::new(resolved, Endianness::Big);
     let payload: Vec<u8> = vec![0x00, 0x99];
-    let decoded = codec.decode_message("Bitmap14_3", &payload).expect("decode");
-    for name in ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n"] {
+    let decoded = codec
+        .decode_message("Bitmap14_3", &payload)
+        .expect("decode");
+    for name in [
+        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n",
+    ] {
         assert!(optional_absent(&decoded, name), "{} should be absent", name);
     }
     let (consumed, _) = codec.decode_message_with_extent("Bitmap14_3", &payload);
     assert_eq!(consumed, 1, "FSPEC is 1 byte when FX=0");
 }
-
 
 /// **Behaviour**: 1 block (4 bits): value 2 = optional 0 present, FX=0. Rest absent. Wire: low nibble 0x02.
 #[test]
@@ -495,9 +577,13 @@ fn bitmap_14_3_decode_one_byte_fx0_first_present() {
     let resolved = resolve(BITMAP_14_3);
     let codec = Codec::new(resolved, Endianness::Big);
     let payload: Vec<u8> = vec![0x02, 42];
-    let decoded = codec.decode_message("Bitmap14_3", &payload).expect("decode");
+    let decoded = codec
+        .decode_message("Bitmap14_3", &payload)
+        .expect("decode");
     assert_eq!(optional_u8(&decoded, "a"), Some(42));
-    for name in ["b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n"] {
+    for name in [
+        "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n",
+    ] {
         assert!(optional_absent(&decoded, name), "{} should be absent", name);
     }
 }
@@ -508,7 +594,9 @@ fn bitmap_14_3_decode_one_byte_fx0_three_present() {
     let resolved = resolve(BITMAP_14_3);
     let codec = Codec::new(resolved, Endianness::Big);
     let payload: Vec<u8> = vec![0x0E, 10, 11, 12];
-    let decoded = codec.decode_message("Bitmap14_3", &payload).expect("decode");
+    let decoded = codec
+        .decode_message("Bitmap14_3", &payload)
+        .expect("decode");
     assert_eq!(optional_u8(&decoded, "a"), Some(10));
     assert_eq!(optional_u8(&decoded, "b"), Some(11));
     assert_eq!(optional_u8(&decoded, "c"), Some(12));
@@ -523,9 +611,13 @@ fn bitmap_14_3_decode_two_bytes_first_present() {
     let resolved = resolve(BITMAP_14_3);
     let codec = Codec::new(resolved, Endianness::Big);
     let payload: Vec<u8> = vec![0x03, 100];
-    let decoded = codec.decode_message("Bitmap14_3", &payload).expect("decode");
+    let decoded = codec
+        .decode_message("Bitmap14_3", &payload)
+        .expect("decode");
     assert_eq!(optional_u8(&decoded, "a"), Some(100));
-    for name in ["b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n"] {
+    for name in [
+        "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n",
+    ] {
         assert!(optional_absent(&decoded, name), "{} should be absent", name);
     }
     let (consumed, _) = codec.decode_message_with_extent("Bitmap14_3", &payload);
@@ -539,7 +631,9 @@ fn bitmap_14_3_encode_all_absent_one_byte() {
     let codec = Codec::new(resolved, Endianness::Big);
     let mut v = HashMap::new();
     v.insert("fspec".to_string(), Value::Bytes(vec![]));
-    for n in ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n"] {
+    for n in [
+        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n",
+    ] {
         v.insert(n.to_string(), Value::List(vec![]));
     }
     let encoded = codec.encode_message("Bitmap14_3", &v).expect("encode");
@@ -556,11 +650,16 @@ fn bitmap_14_3_encode_first_present_one_byte() {
     let mut v = HashMap::new();
     v.insert("fspec".to_string(), Value::Bytes(vec![]));
     v.insert("a".to_string(), Value::List(vec![Value::U8(33)]));
-    for n in ["b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n"] {
+    for n in [
+        "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n",
+    ] {
         v.insert(n.to_string(), Value::List(vec![]));
     }
     let encoded = codec.encode_message("Bitmap14_3", &v).expect("encode");
-    assert_eq!(encoded[0], 0x13, "first byte = block0=3, block1=1 (4 bits each)");
+    assert_eq!(
+        encoded[0], 0x13,
+        "first byte = block0=3, block1=1 (4 bits each)"
+    );
     assert!(encoded.len() >= 2);
     assert_eq!(encoded[encoded.len() - 1], 33, "trailing u8 value");
 }
@@ -574,7 +673,11 @@ fn bitmap_14_3_decode_reject_last_fx1_at_max_size() {
     let result = codec.decode_message("Bitmap14_3", &payload);
     match &result {
         Err(CodecError::Validation(msg)) => {
-            assert!(msg.contains("last FSPEC byte must have FX=0"), "got: {}", msg);
+            assert!(
+                msg.contains("last FSPEC byte must have FX=0"),
+                "got: {}",
+                msg
+            );
         }
         other => panic!("expected Validation error, got: {:?}", other),
     }
@@ -595,7 +698,9 @@ fn bitmap_14_3_roundtrip_four_present() {
         v.insert(n.to_string(), Value::List(vec![]));
     }
     let encoded = codec.encode_message("Bitmap14_3", &v).expect("encode");
-    let decoded = codec.decode_message("Bitmap14_3", &encoded).expect("decode");
+    let decoded = codec
+        .decode_message("Bitmap14_3", &encoded)
+        .expect("decode");
     assert_eq!(optional_u8(&decoded, "a"), Some(1));
     assert_eq!(optional_u8(&decoded, "b"), Some(2));
     assert_eq!(optional_u8(&decoded, "c"), Some(3));
@@ -620,7 +725,11 @@ fn bitmap_presence_decode_reject_last_fx1_at_max_size() {
     let result = codec.decode_message("Bitmap14_7", &payload);
     match &result {
         Err(CodecError::Validation(msg)) => {
-            assert!(msg.contains("last FSPEC byte must have FX=0"), "expected last-FX-0 message, got: {}", msg);
+            assert!(
+                msg.contains("last FSPEC byte must have FX=0"),
+                "expected last-FX-0 message, got: {}",
+                msg
+            );
         }
         other => panic!("expected Validation error, got: {:?}", other),
     }

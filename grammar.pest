@@ -59,7 +59,8 @@ struct_field = {
 // --- Type specifications ---
 // Sized int: integer stored in n bits, e.g. u16(14) or i16(10); use instead of bitfield(n) when value is an integer
 type_spec = {
-    sized_int_type
+    array_type
+    | sized_int_type
     | base_type
     | padding_type
     | bitfield_type
@@ -71,7 +72,6 @@ type_spec = {
     | rep_list_type
     | octets_fx_type
     | optional_type
-    | array_type
     | struct_ref_type
 }
 octets_fx_type = { "octets_fx" }

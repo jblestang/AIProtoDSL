@@ -10,8 +10,8 @@ struct ProtocolParser;
 
 /// Parse protocol source into AST.
 pub fn parse(source: &str) -> Result<Protocol, String> {
-    let pairs = ProtocolParser::parse(Rule::protocol, source)
-        .map_err(|e| format!("Parse error: {}", e))?;
+    let pairs =
+        ProtocolParser::parse(Rule::protocol, source).map_err(|e| format!("Parse error: {}", e))?;
     let pair = pairs.into_iter().next().ok_or("Empty parse")?;
     build_protocol(pair)
 }
@@ -83,7 +83,10 @@ fn build_payload(pair: pest::iterators::Pair<Rule>) -> Result<PayloadSection, St
         if payload_field.as_rule() != Rule::payload_field {
             continue;
         }
-        let inner = payload_field.into_inner().next().ok_or("empty payload_field")?;
+        let inner = payload_field
+            .into_inner()
+            .next()
+            .ok_or("empty payload_field")?;
         match inner.as_rule() {
             Rule::messages_list => {
                 for part in inner.into_inner() {
@@ -106,7 +109,11 @@ fn build_payload(pair: pest::iterators::Pair<Rule>) -> Result<PayloadSection, St
     if messages.is_empty() {
         return Err("payload must list at least one message".to_string());
     }
-    Ok(PayloadSection { messages, selector, repeated })
+    Ok(PayloadSection {
+        messages,
+        selector,
+        repeated,
+    })
 }
 
 fn build_selector_spec(pair: pest::iterators::Pair<Rule>) -> Result<PayloadSelector, String> {
@@ -124,16 +131,25 @@ fn build_selector_spec(pair: pest::iterators::Pair<Rule>) -> Result<PayloadSelec
             let literal = parse_literal(lit_pair.as_str());
             // selector_msg_type: either selector_list_type (list<ident>) or plain ident
             let (message_name, is_list) = if msg_type_pair.as_rule() == Rule::selector_msg_type {
-                let first = msg_type_pair.into_inner().next().ok_or("selector msg type")?;
+                let first = msg_type_pair
+                    .into_inner()
+                    .next()
+                    .ok_or("selector msg type")?;
                 match first.as_rule() {
                     Rule::selector_list_type => {
-                        let ident = first.into_inner().next().ok_or("list<ident>: missing ident")?;
+                        let ident = first
+                            .into_inner()
+                            .next()
+                            .ok_or("list<ident>: missing ident")?;
                         (ident.as_str().to_string(), true)
                     }
-                    Rule::ident => {
-                        (first.as_str().to_string(), false)
+                    Rule::ident => (first.as_str().to_string(), false),
+                    _ => {
+                        return Err(format!(
+                            "unexpected selector_msg_type child: {:?}",
+                            first.as_rule()
+                        ))
                     }
-                    _ => return Err(format!("unexpected selector_msg_type child: {:?}", first.as_rule())),
                 }
             } else {
                 (msg_type_pair.as_str().to_string(), false)
@@ -166,11 +182,17 @@ fn build_type_def_section(pair: pest::iterators::Pair<Rule>) -> Result<TypeDefSe
 }
 
 fn parse_doc_tag_content(doc_tag_pair: pest::iterators::Pair<Rule>) -> Result<String, String> {
-    let lit = doc_tag_pair.into_inner().next().ok_or("doc_tag: missing string_literal")?;
+    let lit = doc_tag_pair
+        .into_inner()
+        .next()
+        .ok_or("doc_tag: missing string_literal")?;
     let s = lit.as_str();
     if s.starts_with('"') && s.ends_with('"') {
         let inner = &s[1..s.len() - 1];
-        Ok(inner.replace("\\\"", "\"").replace("\\n", "\n").replace("\\t", "\t"))
+        Ok(inner
+            .replace("\\\"", "\"")
+            .replace("\\n", "\n")
+            .replace("\\t", "\t"))
     } else {
         Ok(s.to_string())
     }
@@ -211,23 +233,27 @@ fn build_type_def_field(pair: pest::iterators::Pair<Rule>) -> Result<TypeDefFiel
 fn build_abstract_type(pair: pest::iterators::Pair<Rule>) -> Result<AbstractType, String> {
     let inner = pair.into_inner().next().ok_or("Empty abstract_type_spec")?;
     match inner.as_rule() {
-        Rule::abstract_base_type => {
-            match inner.as_str() {
-                "integer" => Ok(AbstractType::Integer),
-                "boolean" => Ok(AbstractType::Boolean),
-                "octets" => Ok(AbstractType::Octets),
-                "real" => Ok(AbstractType::Real),
-                other => Err(format!("Unknown abstract base type: {}", other)),
-            }
-        }
+        Rule::abstract_base_type => match inner.as_str() {
+            "integer" => Ok(AbstractType::Integer),
+            "boolean" => Ok(AbstractType::Boolean),
+            "octets" => Ok(AbstractType::Octets),
+            "real" => Ok(AbstractType::Real),
+            other => Err(format!("Unknown abstract base type: {}", other)),
+        },
         Rule::abstract_seq_type => {
-            let inner_type = inner.into_inner()
+            let inner_type = inner
+                .into_inner()
                 .find(|p| p.as_rule() == Rule::abstract_type_spec)
                 .ok_or("sequence of: missing element type")?;
-            Ok(AbstractType::SequenceOf(Box::new(build_abstract_type(inner_type)?)))
+            Ok(AbstractType::SequenceOf(Box::new(build_abstract_type(
+                inner_type,
+            )?)))
         }
         Rule::ident => Ok(AbstractType::TypeRef(inner.as_str().to_string())),
-        _ => Err(format!("Unhandled abstract type rule: {:?}", inner.as_rule())),
+        _ => Err(format!(
+            "Unhandled abstract type rule: {:?}",
+            inner.as_rule()
+        )),
     }
 }
 
@@ -243,9 +269,7 @@ fn build_transport(pair: pest::iterators::Pair<Rule>) -> Result<TransportSection
     Ok(TransportSection { fields })
 }
 
-fn build_transport_field(
-    pair: pest::iterators::Pair<Rule>,
-) -> Result<TransportField, String> {
+fn build_transport_field(pair: pest::iterators::Pair<Rule>) -> Result<TransportField, String> {
     let mut name = String::new();
     let mut type_spec = None;
     let mut default = None;
@@ -281,18 +305,35 @@ fn build_transport_type_spec(
         Rule::sized_int_type => {
             let mut it = inner.into_inner();
             let base = it.next().ok_or("sized_int base")?;
-            let n = it.next().and_then(|p| p.as_str().parse().ok()).ok_or("sized_int(n) needs number")?;
+            let n = it
+                .next()
+                .and_then(|p| p.as_str().parse().ok())
+                .ok_or("sized_int(n) needs number")?;
             let bt = parse_base_type(base.as_str())?;
             Ok(TransportTypeSpec::SizedInt(bt, n))
         }
         Rule::padding_type => {
             let pairs: Vec<_> = inner.into_inner().collect();
-            let n = pairs.iter().find(|p| p.as_rule() == Rule::num).and_then(|p| p.as_str().parse().ok()).ok_or("padding(n) needs number")?;
-            let bits = pairs.iter().any(|p| p.as_rule() == Rule::padding_bits_suffix);
-            Ok(TransportTypeSpec::Padding(if bits { PaddingKind::Bits(n) } else { PaddingKind::Bytes(n) }))
+            let n = pairs
+                .iter()
+                .find(|p| p.as_rule() == Rule::num)
+                .and_then(|p| p.as_str().parse().ok())
+                .ok_or("padding(n) needs number")?;
+            let bits = pairs
+                .iter()
+                .any(|p| p.as_rule() == Rule::padding_bits_suffix);
+            Ok(TransportTypeSpec::Padding(if bits {
+                PaddingKind::Bits(n)
+            } else {
+                PaddingKind::Bytes(n)
+            }))
         }
         Rule::bitfield_type => {
-            let n = inner.into_inner().next().and_then(|p| p.as_str().parse().ok()).ok_or("bitfield(n) needs number")?;
+            let n = inner
+                .into_inner()
+                .next()
+                .and_then(|p| p.as_str().parse().ok())
+                .ok_or("bitfield(n) needs number")?;
             Ok(TransportTypeSpec::Bitfield(n))
         }
         Rule::magic_type => {
@@ -318,16 +359,18 @@ fn build_message(pair: pest::iterators::Pair<Rule>) -> Result<MessageSection, St
 }
 
 fn build_message_field(pair: pest::iterators::Pair<Rule>) -> Result<MessageField, String> {
-    build_generic_field(pair, build_type_spec).map(|(name, type_spec, default, constraint, condition, quantum, doc)| MessageField {
-        name,
-        type_spec,
-        default,
-        constraint,
-        condition,
-        quantum,
-        doc,
-        saturating: false,
-    })
+    build_generic_field(pair, build_type_spec).map(
+        |(name, type_spec, default, constraint, condition, quantum, doc)| MessageField {
+            name,
+            type_spec,
+            default,
+            constraint,
+            condition,
+            quantum,
+            doc,
+            saturating: false,
+        },
+    )
 }
 
 fn build_struct(pair: pest::iterators::Pair<Rule>) -> Result<StructSection, String> {
@@ -344,20 +387,34 @@ fn build_struct(pair: pest::iterators::Pair<Rule>) -> Result<StructSection, Stri
 }
 
 fn build_struct_field(pair: pest::iterators::Pair<Rule>) -> Result<StructField, String> {
-    build_generic_field(pair, build_type_spec).map(|(name, type_spec, default, constraint, condition, quantum, _doc)| StructField {
-        name,
-        type_spec,
-        default,
-        constraint,
-        condition,
-        quantum,
-    })
+    build_generic_field(pair, build_type_spec).map(
+        |(name, type_spec, default, constraint, condition, quantum, _doc)| StructField {
+            name,
+            type_spec,
+            default,
+            constraint,
+            condition,
+            quantum,
+            saturating: false,
+        },
+    )
 }
 
 fn build_generic_field<F>(
     pair: pest::iterators::Pair<Rule>,
     type_builder: F,
-) -> Result<(String, TypeSpec, Option<Literal>, Option<Constraint>, Option<Condition>, Option<String>, Option<String>), String>
+) -> Result<
+    (
+        String,
+        TypeSpec,
+        Option<Literal>,
+        Option<Constraint>,
+        Option<Condition>,
+        Option<String>,
+        Option<String>,
+    ),
+    String,
+>
 where
     F: FnOnce(pest::iterators::Pair<Rule>) -> Result<TypeSpec, String>,
 {
@@ -393,8 +450,12 @@ where
         }
     }
     let type_spec = type_builder(type_spec_pair.ok_or("Missing type in field")?)?;
-    let condition = cond_field.zip(cond_value).map(|(field, value)| Condition { field, value });
-    Ok((name, type_spec, default, constraint, condition, quantum, doc))
+    let condition = cond_field
+        .zip(cond_value)
+        .map(|(field, value)| Condition { field, value });
+    Ok((
+        name, type_spec, default, constraint, condition, quantum, doc,
+    ))
 }
 
 fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String> {
@@ -404,30 +465,61 @@ fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String
         Rule::sized_int_type => {
             let mut it = inner.into_inner();
             let base = it.next().ok_or("sized_int base")?;
-            let n = it.next().and_then(|p| p.as_str().parse().ok()).ok_or("sized_int(n) needs number")?;
+            let n = it
+                .next()
+                .and_then(|p| p.as_str().parse().ok())
+                .ok_or("sized_int(n) needs number")?;
             let bt = parse_base_type(base.as_str())?;
             Ok(TypeSpec::SizedInt(bt, n))
         }
         Rule::padding_type => {
             let pairs: Vec<_> = inner.into_inner().collect();
-            let n = pairs.iter().find(|p| p.as_rule() == Rule::num).and_then(|p| p.as_str().parse().ok()).ok_or("padding(n)")?;
-            let bits = pairs.iter().any(|p| p.as_rule() == Rule::padding_bits_suffix);
-            Ok(TypeSpec::Padding(if bits { PaddingKind::Bits(n) } else { PaddingKind::Bytes(n) }))
+            let n = pairs
+                .iter()
+                .find(|p| p.as_rule() == Rule::num)
+                .and_then(|p| p.as_str().parse().ok())
+                .ok_or("padding(n)")?;
+            let bits = pairs
+                .iter()
+                .any(|p| p.as_rule() == Rule::padding_bits_suffix);
+            Ok(TypeSpec::Padding(if bits {
+                PaddingKind::Bits(n)
+            } else {
+                PaddingKind::Bytes(n)
+            }))
         }
         Rule::bitfield_type => {
-            let n = inner.into_inner().next().and_then(|p| p.as_str().parse().ok()).ok_or("bitfield(n)")?;
+            let n = inner
+                .into_inner()
+                .next()
+                .and_then(|p| p.as_str().parse().ok())
+                .ok_or("bitfield(n)")?;
             Ok(TypeSpec::Bitfield(n))
         }
         Rule::length_of_type => {
-            let id = inner.into_inner().next().ok_or("length_of(field)")?.as_str().to_string();
+            let id = inner
+                .into_inner()
+                .next()
+                .ok_or("length_of(field)")?
+                .as_str()
+                .to_string();
             Ok(TypeSpec::LengthOf(id))
         }
         Rule::count_of_type => {
-            let id = inner.into_inner().next().ok_or("count_of(field)")?.as_str().to_string();
+            let id = inner
+                .into_inner()
+                .next()
+                .ok_or("count_of(field)")?
+                .as_str()
+                .to_string();
             Ok(TypeSpec::CountOf(id))
         }
         Rule::presence_bits_type => {
-            let n = inner.into_inner().next().and_then(|p| p.as_str().parse().ok()).ok_or("presence_bits(n)")?;
+            let n = inner
+                .into_inner()
+                .next()
+                .and_then(|p| p.as_str().parse().ok())
+                .ok_or("presence_bits(n)")?;
             if ![1, 2, 4].contains(&n) {
                 return Err("presence_bits(n): n must be 1, 2, or 4".to_string());
             }
@@ -438,10 +530,21 @@ fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String
             let nums: Vec<u32> = pairs
                 .iter()
                 .find(|p| p.as_rule() == Rule::bitmap_size)
-                .map(|p| p.clone().into_inner().filter_map(|q| q.as_str().parse().ok()).collect())
+                .map(|p| {
+                    p.clone()
+                        .into_inner()
+                        .filter_map(|q| q.as_str().parse().ok())
+                        .collect()
+                })
                 .unwrap_or_default();
-            let total_bits = nums.get(0).copied().ok_or("bitmap requires (total_bits, presence_per_block)")?;
-            let presence_per_block = nums.get(1).copied().ok_or("bitmap requires (total_bits, presence_per_block)")?;
+            let total_bits = nums
+                .get(0)
+                .copied()
+                .ok_or("bitmap requires (total_bits, presence_per_block)")?;
+            let presence_per_block = nums
+                .get(1)
+                .copied()
+                .ok_or("bitmap requires (total_bits, presence_per_block)")?;
             let mapping = pairs
                 .into_iter()
                 .find(|p| p.as_rule() == Rule::bitmap_mapping_list)
@@ -488,13 +591,19 @@ fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String
         Rule::array_type => {
             let mut inner_iter = inner.into_inner();
             let elem_type = inner_iter.next().ok_or("array type")?;
-            let len_pair = inner_iter.next().ok_or("array len")?;
+            let len_pair_wrapper = inner_iter.next().ok_or("array len")?;
+            let len_pair = len_pair_wrapper
+                .into_inner()
+                .next()
+                .ok_or("array len inner")?;
             let elem_spec = match elem_type.as_rule() {
                 Rule::type_spec_inner => build_type_spec_inner(elem_type)?,
                 _ => build_type_spec(elem_type)?,
             };
             let len = match len_pair.as_rule() {
-                Rule::num => ArrayLen::Constant(len_pair.as_str().parse().map_err(|_| "array length")?),
+                Rule::num => {
+                    ArrayLen::Constant(len_pair.as_str().parse().map_err(|_| "array length")?)
+                }
                 Rule::ident => ArrayLen::FieldRef(len_pair.as_str().to_string()),
                 _ => return Err("array length".to_string()),
             };
@@ -506,12 +615,16 @@ fn build_type_spec(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, String
         }
         Rule::rep_list_type => {
             let inner_type = inner.into_inner().next().ok_or("rep_list<T>")?;
-            Ok(TypeSpec::RepList(Box::new(build_type_spec_inner(inner_type)?)))
+            Ok(TypeSpec::RepList(Box::new(build_type_spec_inner(
+                inner_type,
+            )?)))
         }
         Rule::octets_fx_type => Ok(TypeSpec::OctetsFx),
         Rule::optional_type => {
             let inner_type = inner.into_inner().next().ok_or("optional<T>")?;
-            Ok(TypeSpec::Optional(Box::new(build_type_spec_inner(inner_type)?)))
+            Ok(TypeSpec::Optional(Box::new(build_type_spec_inner(
+                inner_type,
+            )?)))
         }
         _ => Err(format!("Unhandled type rule: {:?}", inner.as_rule())),
     }
@@ -524,18 +637,35 @@ fn build_type_spec_inner(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, 
         Rule::sized_int_type => {
             let mut it = inner.into_inner();
             let base = it.next().ok_or("sized_int base")?;
-            let n = it.next().and_then(|p| p.as_str().parse().ok()).ok_or("sized_int(n)")?;
+            let n = it
+                .next()
+                .and_then(|p| p.as_str().parse().ok())
+                .ok_or("sized_int(n)")?;
             let bt = parse_base_type(base.as_str())?;
             Ok(TypeSpec::SizedInt(bt, n))
         }
         Rule::padding_type => {
             let pairs: Vec<_> = inner.into_inner().collect();
-            let n = pairs.iter().find(|p| p.as_rule() == Rule::num).and_then(|p| p.as_str().parse().ok()).ok_or("padding")?;
-            let bits = pairs.iter().any(|p| p.as_rule() == Rule::padding_bits_suffix);
-            Ok(TypeSpec::Padding(if bits { PaddingKind::Bits(n) } else { PaddingKind::Bytes(n) }))
+            let n = pairs
+                .iter()
+                .find(|p| p.as_rule() == Rule::num)
+                .and_then(|p| p.as_str().parse().ok())
+                .ok_or("padding")?;
+            let bits = pairs
+                .iter()
+                .any(|p| p.as_rule() == Rule::padding_bits_suffix);
+            Ok(TypeSpec::Padding(if bits {
+                PaddingKind::Bits(n)
+            } else {
+                PaddingKind::Bytes(n)
+            }))
         }
         Rule::bitfield_type => {
-            let n = inner.into_inner().next().and_then(|p| p.as_str().parse().ok()).ok_or("bitfield")?;
+            let n = inner
+                .into_inner()
+                .next()
+                .and_then(|p| p.as_str().parse().ok())
+                .ok_or("bitfield")?;
             Ok(TypeSpec::Bitfield(n))
         }
         Rule::struct_ref_type => Ok(TypeSpec::StructRef(inner.as_str().to_string())),
@@ -545,7 +675,9 @@ fn build_type_spec_inner(pair: pest::iterators::Pair<Rule>) -> Result<TypeSpec, 
         }
         Rule::rep_list_type => {
             let inner_type = inner.into_inner().next().ok_or("rep_list<T>")?;
-            Ok(TypeSpec::RepList(Box::new(build_type_spec_inner(inner_type)?)))
+            Ok(TypeSpec::RepList(Box::new(build_type_spec_inner(
+                inner_type,
+            )?)))
         }
         Rule::octets_fx_type => Ok(TypeSpec::OctetsFx),
         _ => Err("Invalid inner type".to_string()),
@@ -586,11 +718,17 @@ fn build_constraint(pair: pest::iterators::Pair<Rule>) -> Result<Constraint, Str
 }
 
 fn parse_quantum_string(quantum_spec: pest::iterators::Pair<Rule>) -> Result<String, String> {
-    let lit = quantum_spec.into_inner().next().ok_or("quantum_spec: missing string_literal")?;
+    let lit = quantum_spec
+        .into_inner()
+        .next()
+        .ok_or("quantum_spec: missing string_literal")?;
     let s = lit.as_str();
     if s.starts_with('"') && s.ends_with('"') {
         let inner = &s[1..s.len() - 1];
-        Ok(inner.replace("\\\"", "\"").replace("\\n", "\n").replace("\\t", "\t"))
+        Ok(inner
+            .replace("\\\"", "\"")
+            .replace("\\n", "\n")
+            .replace("\\t", "\t"))
     } else {
         Ok(s.to_string())
     }
@@ -622,7 +760,8 @@ fn parse_literal(s: &str) -> Literal {
         return Literal::Bool(false);
     }
     if s.starts_with("0x") || s.starts_with("0X") {
-        if let Ok(n) = u64::from_str_radix(s.trim_start_matches("0x").trim_start_matches("0X"), 16) {
+        if let Ok(n) = u64::from_str_radix(s.trim_start_matches("0x").trim_start_matches("0X"), 16)
+        {
             return Literal::Hex(n);
         }
     }
@@ -631,7 +770,10 @@ fn parse_literal(s: &str) -> Literal {
     }
     if s.starts_with('"') && s.ends_with('"') {
         let inner = &s[1..s.len() - 1];
-        let unescaped = inner.replace("\\n", "\n").replace("\\t", "\t").replace("\\\"", "\"");
+        let unescaped = inner
+            .replace("\\n", "\n")
+            .replace("\\t", "\t")
+            .replace("\\\"", "\"");
         return Literal::String(unescaped);
     }
     Literal::Int(0)
@@ -641,7 +783,10 @@ fn parse_literal_bytes(s: &str) -> Result<Vec<u8>, String> {
     let s = s.trim();
     if s.starts_with('"') && s.ends_with('"') {
         let inner = &s[1..s.len() - 1];
-        let unescaped = inner.replace("\\n", "\n").replace("\\t", "\t").replace("\\\"", "\"");
+        let unescaped = inner
+            .replace("\\n", "\n")
+            .replace("\\t", "\t")
+            .replace("\\\"", "\"");
         return Ok(unescaped.into_bytes());
     }
     if s.starts_with("0x") || s.starts_with("0X") {

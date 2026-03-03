@@ -17,7 +17,8 @@ pub struct DecodedRecord {
 fn load_pcap_and_dsl_from_memory(
     pcap_bytes: &[u8],
     dsl_text: &str,
-) -> Result<(Vec<DecodedRecord>, crate::ResolvedProtocol), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(Vec<DecodedRecord>, crate::ResolvedProtocol), Box<dyn std::error::Error + Send + Sync>>
+{
     use crate::{parse, Codec, Endianness, ResolvedProtocol};
     use pcap_parser::pcapng::Block as PcapNgBlock;
     use pcap_parser::traits::{PcapNGPacketBlock, PcapReaderIterator};
@@ -39,20 +40,32 @@ fn load_pcap_and_dsl_from_memory(
     let mut if_linktypes: Vec<Linktype> = vec![];
 
     if is_pcapng {
-        let mut reader = pcap_parser::pcapng::PcapNGReader::new(1 << 20, std::io::Cursor::new(pcap_bytes))
-            .map_err(|e| format!("PcapNGReader: {:?}", e))?;
+        let mut reader =
+            pcap_parser::pcapng::PcapNGReader::new(1 << 20, std::io::Cursor::new(pcap_bytes))
+                .map_err(|e| format!("PcapNGReader: {:?}", e))?;
         loop {
             match reader.next() {
                 Ok((offset, block)) => {
                     if let PcapBlockOwned::NG(b) = block {
                         match &b {
-                            PcapNgBlock::InterfaceDescription(idb) => if_linktypes.push(idb.linktype),
+                            PcapNgBlock::InterfaceDescription(idb) => {
+                                if_linktypes.push(idb.linktype)
+                            }
                             PcapNgBlock::EnhancedPacket(epb) => {
                                 pkt_count += 1;
-                                let lt = if_linktypes.get(epb.if_id as usize).copied().unwrap_or(Linktype(1));
+                                let lt = if_linktypes
+                                    .get(epb.if_id as usize)
+                                    .copied()
+                                    .unwrap_or(Linktype(1));
                                 let frame = epb.packet_data();
                                 if let Some(udp_payload) = udp_payload_from_linktype(lt, frame) {
-                                    process_udp(&codec, &resolved, udp_payload, pkt_count, &mut records);
+                                    process_udp(
+                                        &codec,
+                                        &resolved,
+                                        udp_payload,
+                                        pkt_count,
+                                        &mut records,
+                                    );
                                 }
                             }
                             PcapNgBlock::SimplePacket(spb) => {
@@ -60,7 +73,13 @@ fn load_pcap_and_dsl_from_memory(
                                 let lt = if_linktypes.first().copied().unwrap_or(Linktype(1));
                                 let frame = spb.packet_data();
                                 if let Some(udp_payload) = udp_payload_from_linktype(lt, frame) {
-                                    process_udp(&codec, &resolved, udp_payload, pkt_count, &mut records);
+                                    process_udp(
+                                        &codec,
+                                        &resolved,
+                                        udp_payload,
+                                        pkt_count,
+                                        &mut records,
+                                    );
                                 }
                             }
                             _ => {}
@@ -69,13 +88,16 @@ fn load_pcap_and_dsl_from_memory(
                     reader.consume(offset);
                 }
                 Err(PcapError::Eof) => break,
-                Err(PcapError::Incomplete(_)) => reader.refill().map_err(|e| format!("refill: {:?}", e))?,
+                Err(PcapError::Incomplete(_)) => {
+                    reader.refill().map_err(|e| format!("refill: {:?}", e))?
+                }
                 Err(e) => return Err(format!("pcapng: {:?}", e).into()),
             }
         }
     } else {
-        let mut reader = pcap_parser::pcap::LegacyPcapReader::new(1 << 20, std::io::Cursor::new(pcap_bytes))
-            .map_err(|e| format!("LegacyPcapReader: {:?}", e))?;
+        let mut reader =
+            pcap_parser::pcap::LegacyPcapReader::new(1 << 20, std::io::Cursor::new(pcap_bytes))
+                .map_err(|e| format!("LegacyPcapReader: {:?}", e))?;
         loop {
             match reader.next() {
                 Ok((offset, block)) => {
@@ -85,7 +107,13 @@ fn load_pcap_and_dsl_from_memory(
                             pkt_count += 1;
                             let lt = linktype;
                             if let Some(udp_payload) = udp_payload_from_linktype(lt, b.data) {
-                                process_udp(&codec, &resolved, udp_payload, pkt_count, &mut records);
+                                process_udp(
+                                    &codec,
+                                    &resolved,
+                                    udp_payload,
+                                    pkt_count,
+                                    &mut records,
+                                );
                             }
                         }
                         _ => {}
@@ -93,7 +121,9 @@ fn load_pcap_and_dsl_from_memory(
                     reader.consume(offset);
                 }
                 Err(PcapError::Eof) => break,
-                Err(PcapError::Incomplete(_)) => reader.refill().map_err(|e| format!("refill: {:?}", e))?,
+                Err(PcapError::Incomplete(_)) => {
+                    reader.refill().map_err(|e| format!("refill: {:?}", e))?
+                }
                 Err(e) => return Err(format!("pcap: {:?}", e).into()),
             }
         }
@@ -105,7 +135,8 @@ fn load_pcap_and_dsl_from_memory(
 pub fn load_pcap_and_dsl(
     pcap_path: &str,
     dsl_path: &str,
-) -> Result<(Vec<DecodedRecord>, crate::ResolvedProtocol), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(Vec<DecodedRecord>, crate::ResolvedProtocol), Box<dyn std::error::Error + Send + Sync>>
+{
     let pcap_bytes = std::fs::read(pcap_path)?;
     let dsl_text = std::fs::read_to_string(dsl_path)?;
     load_pcap_and_dsl_from_memory(&pcap_bytes, &dsl_text)
@@ -204,7 +235,11 @@ fn ipv4_udp_payload(l3: &[u8]) -> Option<&[u8]> {
     if total_len < ihl {
         return None;
     }
-    let l3_trunc = if total_len <= l3.len() { &l3[..total_len] } else { l3 };
+    let l3_trunc = if total_len <= l3.len() {
+        &l3[..total_len]
+    } else {
+        l3
+    };
     if l3_trunc.len() < ihl + 8 {
         return None;
     }
@@ -315,7 +350,8 @@ impl eframe::App for GuiApp {
             .show(ctx, |ui: &mut egui::Ui| {
                 ui.heading("Records");
                 ui.separator();
-                let mut by_packet: std::collections::BTreeMap<u64, Vec<usize>> = std::collections::BTreeMap::new();
+                let mut by_packet: std::collections::BTreeMap<u64, Vec<usize>> =
+                    std::collections::BTreeMap::new();
                 for (idx, r) in self.records.iter().enumerate() {
                     by_packet.entry(r.packet_index).or_default().push(idx);
                 }
@@ -403,7 +439,9 @@ fn value_tree_ui(
                         if let Some(d) = doc {
                             ui.add(
                                 egui::Label::new(
-                                    egui::RichText::new(d).small().color(ui.visuals().weak_text_color()),
+                                    egui::RichText::new(d)
+                                        .small()
+                                        .color(ui.visuals().weak_text_color()),
                                 )
                                 .wrap(),
                             );
@@ -437,22 +475,28 @@ fn value_tree_ui(
                 let id = egui::Id::new(("list", container, field_name));
                 let doc = resolved.field_doc(container, field_name);
                 ui.push_id(id, |ui| {
-                    let resp = egui::CollapsingHeader::new(format!("{}: [{} items]", field_name, lst.len()))
-                        .id_salt(id)
-                        .default_open(false)
-                        .show(ui, |ui| {
-                            if let Some(d) = doc {
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(d).small().color(ui.visuals().weak_text_color()),
-                                    )
-                                    .wrap(),
-                                );
-                            }
-                            for (i, item) in lst.iter().enumerate() {
-                                value_tree_ui(ui, resolved, elem_container, &format!("[{}]", i), item);
-                            }
-                        });
+                    let resp = egui::CollapsingHeader::new(format!(
+                        "{}: [{} items]",
+                        field_name,
+                        lst.len()
+                    ))
+                    .id_salt(id)
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        if let Some(d) = doc {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(d)
+                                        .small()
+                                        .color(ui.visuals().weak_text_color()),
+                                )
+                                .wrap(),
+                            );
+                        }
+                        for (i, item) in lst.iter().enumerate() {
+                            value_tree_ui(ui, resolved, elem_container, &format!("[{}]", i), item);
+                        }
+                    });
                     if let Some(d) = doc {
                         resp.header_response.on_hover_text(d);
                     }
@@ -470,7 +514,9 @@ fn value_tree_ui(
                 inner.response.on_hover_text(d);
                 ui.add(
                     egui::Label::new(
-                        egui::RichText::new(d).small().color(ui.visuals().weak_text_color()),
+                        egui::RichText::new(d)
+                            .small()
+                            .color(ui.visuals().weak_text_color()),
                     )
                     .wrap(),
                 );

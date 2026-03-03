@@ -4,11 +4,14 @@
 //! walk+validate+zero uses validate_and_zero_message_in_place (one walk per record; mutates buffer; bench clones blocks per iter).
 //! Decode and decode+encode round-trip.
 
-use aiprotodsl::{message_extent, parse, validate_message_in_place, validate_and_zero_message_in_place, Codec, Endianness, ResolvedProtocol};
-#[cfg(feature = "walk_profile")]
-use aiprotodsl::{get_walk_profile, reset_walk_profile};
 #[cfg(feature = "codec_decode_profile")]
 use aiprotodsl::{get_decode_profile, reset_decode_profile};
+#[cfg(feature = "walk_profile")]
+use aiprotodsl::{get_walk_profile, reset_walk_profile};
+use aiprotodsl::{
+    message_extent, parse, validate_and_zero_message_in_place, validate_message_in_place, Codec,
+    Endianness, ResolvedProtocol,
+};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use pcap_parser::pcap::LegacyPcapReader;
 use pcap_parser::traits::PcapReaderIterator;
@@ -50,7 +53,11 @@ fn ipv4_udp_payload(l3: &[u8]) -> Option<&[u8]> {
         return None;
     }
     let total_len = u16::from_be_bytes([l3[2], l3[3]]) as usize;
-    let l3_trunc = if total_len <= l3.len() { &l3[..total_len] } else { l3 };
+    let l3_trunc = if total_len <= l3.len() {
+        &l3[..total_len]
+    } else {
+        l3
+    };
     if l3_trunc.len() < ihl + 8 || l3_trunc[9] != 17 {
         return None;
     }
@@ -206,10 +213,7 @@ fn load_pcap_blocks(
                             let block = &payload[off..off + block_len];
                             if let Ok(tv) = codec.decode_transport(block) {
                                 if let Some(msg_name) = resolved.message_for_transport_values(&tv) {
-                                    out.push((
-                                        msg_name.to_string(),
-                                        block[3..].to_vec(),
-                                    ));
+                                    out.push((msg_name.to_string(), block[3..].to_vec()));
                                 }
                             }
                             off += block_len;
@@ -261,12 +265,8 @@ fn bench_walk_pcap(c: &mut Criterion) {
         b.iter(|| {
             let mut records = 0usize;
             for (msg_name, body) in &blocks {
-                let n = walk_block_body(
-                    black_box(body),
-                    black_box(msg_name),
-                    &resolved,
-                    endianness,
-                );
+                let n =
+                    walk_block_body(black_box(body), black_box(msg_name), &resolved, endianness);
                 records += n;
             }
             black_box(records)
@@ -390,7 +390,8 @@ fn bench_walk_pcap(c: &mut Criterion) {
     let walk_val_zero_ns = start.elapsed().as_nanos() / (WALK_VALIDATE_ZERO_ITERS as u128);
     let walk_val_zero_us = walk_val_zero_ns as f64 / 1000.0;
     let walk_val_zero_records_per_sec = (total_records as f64) / (walk_val_zero_ns as f64 / 1e9);
-    let walk_val_zero_mb_per_sec = (total_body_bytes as f64) / (walk_val_zero_ns as f64 / 1e9) / 1e6;
+    let walk_val_zero_mb_per_sec =
+        (total_body_bytes as f64) / (walk_val_zero_ns as f64 / 1e9) / 1e6;
 
     let start = std::time::Instant::now();
     for _ in 0..ITERS {
@@ -415,7 +416,11 @@ fn bench_walk_pcap(c: &mut Criterion) {
     let de_en_mb_per_sec = (total_body_bytes as f64) / (de_en_ns as f64 / 1e9) / 1e6;
 
     eprintln!();
-    eprintln!("--- Sustainable data rate comparison (same pcap, {} blocks, {} body bytes) ---", blocks.len(), total_body_bytes);
+    eprintln!(
+        "--- Sustainable data rate comparison (same pcap, {} blocks, {} body bytes) ---",
+        blocks.len(),
+        total_body_bytes
+    );
     eprintln!("  Strategy           |  µs/pcap |  records/s  |  MB/s  |  within 1 ms");
     eprintln!("  ------------------+----------+-------------+--------+------------------");
     eprintln!(
@@ -458,7 +463,6 @@ fn bench_walk_pcap(c: &mut Criterion) {
         us_per_budget / de_en_us,
         us_per_budget / de_en_us * (total_decode_records as f64)
     );
-    eprintln!("---");
 
     // With walk_profile feature: walk-only and walk+validate hotspot breakdown
     #[cfg(feature = "walk_profile")]
@@ -473,7 +477,11 @@ fn bench_walk_pcap(c: &mut Criterion) {
         let mut by_label: Vec<_> = profile.into_iter().collect();
         by_label.sort_by(|a, b| b.1.cmp(&a.1));
         for (label, ns) in &by_label {
-            let pct = if total_ns > 0 { *ns as f64 / total_ns as f64 * 100.0 } else { 0.0 };
+            let pct = if total_ns > 0 {
+                *ns as f64 / total_ns as f64 * 100.0
+            } else {
+                0.0
+            };
             eprintln!("  {:20} {:>12} ns  {:5.1}%", label, ns, pct);
         }
         eprintln!("  {:20} {:>12} ns  100.0%", "TOTAL", total_ns);
@@ -489,7 +497,11 @@ fn bench_walk_pcap(c: &mut Criterion) {
         let mut by_label: Vec<_> = profile.into_iter().collect();
         by_label.sort_by(|a, b| b.1.cmp(&a.1));
         for (label, ns) in &by_label {
-            let pct = if total_ns > 0 { *ns as f64 / total_ns as f64 * 100.0 } else { 0.0 };
+            let pct = if total_ns > 0 {
+                *ns as f64 / total_ns as f64 * 100.0
+            } else {
+                0.0
+            };
             eprintln!("  {:20} {:>12} ns  {:5.1}%", label, ns, pct);
         }
         eprintln!("  {:20} {:>12} ns  100.0%", "TOTAL", total_ns);
@@ -509,11 +521,167 @@ fn bench_walk_pcap(c: &mut Criterion) {
         let mut by_label: Vec<_> = profile.into_iter().collect();
         by_label.sort_by(|a, b| b.1.cmp(&a.1));
         for (label, ns) in &by_label {
-            let pct = if total_ns > 0 { *ns as f64 / total_ns as f64 * 100.0 } else { 0.0 };
+            let pct = if total_ns > 0 {
+                *ns as f64 / total_ns as f64 * 100.0
+            } else {
+                0.0
+            };
             eprintln!("  {:20} {:>12} ns  {:5.1}%", label, ns, pct);
         }
         eprintln!("  {:20} {:>12} ns  100.0%", "TOTAL", total_ns);
     }
+    // --- VM Benchmark ---
+    use aiprotodsl::compiler::Compiler;
+    use aiprotodsl::vm::Machine;
+
+    // Compile all messages used in PCAP
+    let mut programs = std::collections::HashMap::new();
+    let unique_msgs: std::collections::HashSet<_> = blocks.iter().map(|(n, _)| n).collect();
+    for msg in unique_msgs {
+        let compiler = Compiler::new(&resolved);
+        let prog = compiler.compile(msg).expect("compile failed");
+        programs.insert(msg.clone(), prog);
+    }
+    let max_regs = programs
+        .values()
+        .map(|p| p.max_registers)
+        .max()
+        .unwrap_or(16); // Default 16 if empty
+
+    // Dry run to count records/bytes for VM
+    let mut vm_records = 0usize;
+    let mut vm_machine = Machine::new(max_regs);
+    for (msg_name, body) in &blocks {
+        let prog = &programs[msg_name];
+        let mut pos = 0usize;
+        while pos < body.len() {
+            match vm_machine.run(&body[pos..], prog) {
+                Ok(consumed) => {
+                    pos += consumed;
+                    vm_records += 1;
+                }
+                Err(_) => break,
+            }
+        }
+    }
+    eprintln!("vm_walk: {} records (one warm-up pass)", vm_records);
+
+    c.bench_function("vm_walk_cat_034_048_pcap", |b| {
+        let mut machine = Machine::new(max_regs);
+        b.iter(|| {
+            let mut records = 0usize;
+            for (msg_name, body) in &blocks {
+                let prog = &programs[msg_name];
+                let mut pos = 0usize;
+                while pos < body.len() {
+                    // machine.run takes slice from current pos
+                    // Note: run() does not mutate body, it reads from it.
+                    match machine.run(&body[pos..], prog) {
+                        Ok(consumed) => {
+                            pos += consumed;
+                            records += 1;
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+            black_box(records)
+        });
+    });
+
+    // Sustainable data rate for VM
+    let start = std::time::Instant::now();
+    let mut machine = Machine::new(max_regs);
+    for _ in 0..ITERS {
+        for (msg_name, body) in &blocks {
+            let prog = &programs[msg_name];
+            let mut pos = 0usize;
+            while pos < body.len() {
+                if let Ok(consumed) = machine.run(&body[pos..], prog) {
+                    pos += consumed;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    let vm_ns = start.elapsed().as_nanos() / (ITERS as u128);
+    let vm_us = vm_ns as f64 / 1000.0;
+    let vm_records_per_sec = (vm_records as f64) / (vm_ns as f64 / 1e9);
+    let vm_mb_per_sec = (total_body_bytes as f64) / (vm_ns as f64 / 1e9) / 1e6;
+
+    eprintln!(
+        "  vm_walk (bytecode) | {:>8.2} | ~{:.2} M/s   | {:>6.2} | {:.1} pcaps, {:.0} rec",
+        vm_us,
+        vm_records_per_sec / 1e6,
+        vm_mb_per_sec,
+        us_per_budget / vm_us,
+        us_per_budget / vm_us * (vm_records as f64)
+    );
+
+    // --- VM Zeroing Benchmark ---
+    c.bench_function("vm_walk_zero_cat_034_048_pcap", |b| {
+        let mut machine = Machine::new(max_regs);
+        // We need to clone blocks to mutate them in each iter, or at least have a fresh buffer
+        let blocks_zero_base: Vec<(String, Vec<u8>)> = blocks.clone();
+
+        b.iter(|| {
+            // We clone inside the loop to simulate "fresh data" to zero-out (though excessive allocation?)
+            // walk_validate_zero benchmark also modifies in place.
+            // But if we modify in place repeatedly, subsequent runs just write zeros over zeros.
+            // This is acceptable for throughput measurement (write cost is same).
+            // So we can use a per-iteration clone only if we want to measure "dirty cache"?
+            // Standard approach: just run on same buffer.
+            let mut blocks_mut = blocks_zero_base.clone();
+            let mut records = 0usize;
+            for (msg_name, body) in &mut blocks_mut {
+                let prog = &programs[msg_name];
+                let mut pos = 0usize;
+                while pos < body.len() {
+                    match machine.run_mut(&mut body[pos..], prog) {
+                        Ok(consumed) => {
+                            pos += consumed;
+                            records += 1;
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+            black_box(records)
+        });
+    });
+
+    // Sustainable data rate for VM Zero
+    let start = std::time::Instant::now();
+    let mut machine = Machine::new(max_regs);
+    // Use a single buffer to minimize allocation noise
+    let mut blocks_mut = blocks.clone();
+
+    for _ in 0..ITERS {
+        for (msg_name, body) in &mut blocks_mut {
+            let prog = &programs[msg_name];
+            let mut pos = 0usize;
+            while pos < body.len() {
+                if let Ok(consumed) = machine.run_mut(&mut body[pos..], prog) {
+                    pos += consumed;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    let vmz_ns = start.elapsed().as_nanos() / (ITERS as u128);
+    let vmz_us = vmz_ns as f64 / 1000.0;
+    let vmz_mb = (total_body_bytes as f64) / (vmz_ns as f64 / 1e9) / 1e6;
+
+    eprintln!(
+        "  vm_walk_zero       | {:>8.2} | ~{:.2} M/s   | {:>6.2} |",
+        vmz_us,
+        (vm_records as f64) / (vmz_ns as f64 / 1e9) / 1e6,
+        vmz_mb
+    );
+
+    eprintln!("---");
 }
 
 criterion_group!(benches, bench_walk_pcap);

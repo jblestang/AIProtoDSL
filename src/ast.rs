@@ -156,6 +156,8 @@ pub struct StructField {
     pub condition: Option<Condition>,
     /// Resolution/unit per spec (e.g. "1/256 NM").
     pub quantum: Option<String>,
+    /// Set at resolve: true when constraint saturates the type range.
+    pub saturating: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -180,7 +182,11 @@ pub enum TypeSpec {
     /// Bitmap: bitmap(total_bits, presence_per_block). total_bits = number of presence bits (optionals).
     /// presence_per_block = 0 => no FX (consecutive bits); k > 0 => blocks of k presence + 1 FX (FX=0 on last block).
     /// Mapping lists (logical_index, field_name); FX is not a mapped field.
-    BitmapPresence { total_bits: u32, presence_per_block: u32, mapping: Vec<(u32, String)> },
+    BitmapPresence {
+        total_bits: u32,
+        presence_per_block: u32,
+        mapping: Vec<(u32, String)>,
+    },
     StructRef(String),
     Array(Box<TypeSpec>, ArrayLen),
     List(Box<TypeSpec>),
@@ -247,7 +253,10 @@ pub fn type_spec_integer_range(spec: &TypeSpec) -> Option<(i64, i64)> {
         TypeSpec::SizedInt(bt, n) => {
             if *n > 63 {
                 None
-            } else if matches!(bt, BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64) {
+            } else if matches!(
+                bt,
+                BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64
+            ) {
                 let half = 1i64 << (n - 1);
                 Some((-half, half - 1))
             } else {
@@ -255,6 +264,7 @@ pub fn type_spec_integer_range(spec: &TypeSpec) -> Option<(i64, i64)> {
                 Some((0, max))
             }
         }
+        TypeSpec::Optional(inner) => type_spec_integer_range(inner),
         _ => None,
     }
 }
@@ -289,8 +299,12 @@ fn build_message_field_saturating(messages: &[MessageSection]) -> HashMap<String
             .fields
             .iter()
             .map(|f| {
-                let Some(ref c) = f.constraint else { return false };
-                let Some((type_min, type_max)) = type_spec_integer_range(&f.type_spec) else { return false };
+                let Some(ref c) = f.constraint else {
+                    return false;
+                };
+                let Some((type_min, type_max)) = type_spec_integer_range(&f.type_spec) else {
+                    return false;
+                };
                 constraint_saturates_range(c, type_min, type_max)
             })
             .collect();
@@ -299,7 +313,9 @@ fn build_message_field_saturating(messages: &[MessageSection]) -> HashMap<String
     out
 }
 
-fn build_bitmap_presence_mappings_messages(messages: &[MessageSection]) -> Result<HashMap<String, BitmapPresenceMapping>, String> {
+fn build_bitmap_presence_mappings_messages(
+    messages: &[MessageSection],
+) -> Result<HashMap<String, BitmapPresenceMapping>, String> {
     let mut out = HashMap::new();
     for msg in messages {
         let mut i = 0;
@@ -331,9 +347,20 @@ fn build_bitmap_presence_mappings_messages(messages: &[MessageSection]) -> Resul
                     }
                     m.clone()
                 } else {
-                    optional_fields.iter().enumerate().map(|(b, name)| (b as u32, name.clone())).collect()
+                    optional_fields
+                        .iter()
+                        .enumerate()
+                        .map(|(b, name)| (b as u32, name.clone()))
+                        .collect()
                 };
-                out.insert(msg.name.clone(), BitmapPresenceMapping { presence_field, optional_fields, bit_to_field });
+                out.insert(
+                    msg.name.clone(),
+                    BitmapPresenceMapping {
+                        presence_field,
+                        optional_fields,
+                        bit_to_field,
+                    },
+                );
                 break;
             }
             i += 1;
@@ -342,7 +369,9 @@ fn build_bitmap_presence_mappings_messages(messages: &[MessageSection]) -> Resul
     Ok(out)
 }
 
-fn build_bitmap_presence_mappings_structs(structs: &[StructSection]) -> Result<HashMap<String, BitmapPresenceMapping>, String> {
+fn build_bitmap_presence_mappings_structs(
+    structs: &[StructSection],
+) -> Result<HashMap<String, BitmapPresenceMapping>, String> {
     let mut out = HashMap::new();
     for s in structs {
         let mut i = 0;
@@ -374,9 +403,20 @@ fn build_bitmap_presence_mappings_structs(structs: &[StructSection]) -> Result<H
                     }
                     m.clone()
                 } else {
-                    optional_fields.iter().enumerate().map(|(b, name)| (b as u32, name.clone())).collect()
+                    optional_fields
+                        .iter()
+                        .enumerate()
+                        .map(|(b, name)| (b as u32, name.clone()))
+                        .collect()
                 };
-                out.insert(s.name.clone(), BitmapPresenceMapping { presence_field, optional_fields, bit_to_field });
+                out.insert(
+                    s.name.clone(),
+                    BitmapPresenceMapping {
+                        presence_field,
+                        optional_fields,
+                        bit_to_field,
+                    },
+                );
                 break;
             }
             i += 1;
@@ -417,12 +457,18 @@ pub struct BitmapPresenceMapping {
 impl BitmapPresenceMapping {
     /// Field name for a given bit position. Returns None if bit is out of range.
     pub fn field_for_bit(&self, bit: u32) -> Option<&str> {
-        self.bit_to_field.iter().find(|(b, _)| *b == bit).map(|(_, name)| name.as_str())
+        self.bit_to_field
+            .iter()
+            .find(|(b, _)| *b == bit)
+            .map(|(_, name)| name.as_str())
     }
 
     /// Bit position for a given field name. Returns None if the field is not in this mapping.
     pub fn bit_for_field(&self, field_name: &str) -> Option<u32> {
-        self.bit_to_field.iter().find(|(_, name)| name.as_str() == field_name).map(|(b, _)| *b)
+        self.bit_to_field
+            .iter()
+            .find(|(_, name)| name.as_str() == field_name)
+            .map(|(b, _)| *b)
     }
 }
 
@@ -471,28 +517,47 @@ impl ResolvedProtocol {
         if let Some(ref payload) = protocol.payload {
             for name in &payload.messages {
                 if !messages_by_name.contains_key(name) {
-                    return Err(format!("payload message '{}' is not a defined message", name));
+                    return Err(format!(
+                        "payload message '{}' is not a defined message",
+                        name
+                    ));
                 }
             }
             if let Some(ref sel) = payload.selector {
                 for (_, msg_name, _) in &sel.value_to_message {
                     if !messages_by_name.contains_key(msg_name) {
-                        return Err(format!("payload selector message '{}' is not a defined message", msg_name));
+                        return Err(format!(
+                            "payload selector message '{}' is not a defined message",
+                            msg_name
+                        ));
                     }
                 }
             }
         }
         let message_bitmap_presence = build_bitmap_presence_mappings_messages(&protocol.messages)?;
         let struct_bitmap_presence = build_bitmap_presence_mappings_structs(&protocol.structs)?;
+
+        // Calculate saturating constraints for messages
         let mut protocol = protocol;
-        let saturating_map = build_message_field_saturating(&protocol.messages);
+        let msg_saturating_map = Self::build_message_field_saturating(&protocol.messages);
         for msg in &mut protocol.messages {
-            if let Some(vec) = saturating_map.get(&msg.name) {
+            if let Some(vec) = msg_saturating_map.get(&msg.name) {
                 for (f, &s) in msg.fields.iter_mut().zip(vec.iter()) {
                     f.saturating = s;
                 }
             }
         }
+
+        // Calculate saturating constraints for structs
+        let struct_saturating_map = Self::build_struct_field_saturating(&protocol.structs);
+        for s in &mut protocol.structs {
+            if let Some(vec) = struct_saturating_map.get(&s.name) {
+                for (f, &sat) in s.fields.iter_mut().zip(vec.iter()) {
+                    f.saturating = sat;
+                }
+            }
+        }
+
         Ok(ResolvedProtocol {
             protocol,
             type_defs_by_name,
@@ -504,6 +569,46 @@ impl ResolvedProtocol {
         })
     }
 
+    fn build_message_field_saturating(messages: &[MessageSection]) -> HashMap<String, Vec<bool>> {
+        let mut out = HashMap::new();
+        for msg in messages {
+            let v: Vec<bool> = msg
+                .fields
+                .iter()
+                .map(|f| {
+                    if let Some(ref c) = f.constraint {
+                        if let Some((type_min, type_max)) = type_spec_integer_range(&f.type_spec) {
+                            return constraint_saturates_range(c, type_min, type_max);
+                        }
+                    }
+                    false
+                })
+                .collect();
+            out.insert(msg.name.clone(), v);
+        }
+        out
+    }
+
+    fn build_struct_field_saturating(structs: &[StructSection]) -> HashMap<String, Vec<bool>> {
+        let mut out = HashMap::new();
+        for s in structs {
+            let v: Vec<bool> = s
+                .fields
+                .iter()
+                .map(|f| {
+                    if let Some(ref c) = f.constraint {
+                        if let Some((type_min, type_max)) = type_spec_integer_range(&f.type_spec) {
+                            return constraint_saturates_range(c, type_min, type_max);
+                        }
+                    }
+                    false
+                })
+                .collect();
+            out.insert(s.name.clone(), v);
+        }
+        out
+    }
+
     /// Get an enum definition by name. Used when a type ref (e.g. Cat034MessageType) refers to an enum.
     pub fn get_enum(&self, name: &str) -> Option<&EnumSection> {
         self.enums_by_name
@@ -512,12 +617,18 @@ impl ResolvedProtocol {
     }
 
     /// Mapping from bitmap presence field to optional fields for a message. None if the message has no such field.
-    pub fn bitmap_presence_mapping_message(&self, message_name: &str) -> Option<&BitmapPresenceMapping> {
+    pub fn bitmap_presence_mapping_message(
+        &self,
+        message_name: &str,
+    ) -> Option<&BitmapPresenceMapping> {
         self.message_bitmap_presence.get(message_name)
     }
 
     /// Mapping from bitmap presence field to optional fields for a struct. None if the struct has no such field.
-    pub fn bitmap_presence_mapping_struct(&self, struct_name: &str) -> Option<&BitmapPresenceMapping> {
+    pub fn bitmap_presence_mapping_struct(
+        &self,
+        struct_name: &str,
+    ) -> Option<&BitmapPresenceMapping> {
         self.struct_bitmap_presence.get(struct_name)
     }
 
@@ -532,7 +643,10 @@ impl ResolvedProtocol {
 
     /// Resolve which message type to use from decoded transport values using the payload selector.
     /// Returns None if no payload/selector, or if the selector field is missing or value has no mapping.
-    pub fn message_for_transport_values(&self, transport_values: &std::collections::HashMap<String, crate::value::Value>) -> Option<&str> {
+    pub fn message_for_transport_values(
+        &self,
+        transport_values: &std::collections::HashMap<String, crate::value::Value>,
+    ) -> Option<&str> {
         let payload = self.protocol.payload.as_ref()?;
         let sel = payload.selector.as_ref()?;
         let v = transport_values.get(&sel.transport_field)?;
@@ -548,13 +662,24 @@ impl ResolvedProtocol {
     /// When true, the payload after transport is a list of records (zero or more messages of the selected type per block).
     /// True if the `repeated;` directive is present, or if any selector mapping uses `list<MessageName>`.
     pub fn payload_repeated(&self) -> bool {
-        self.protocol.payload.as_ref().map(|p| {
-            p.repeated || p.selector.as_ref().map(|s| s.value_to_message.iter().any(|(_, _, is_list)| *is_list)).unwrap_or(false)
-        }).unwrap_or(false)
+        self.protocol
+            .payload
+            .as_ref()
+            .map(|p| {
+                p.repeated
+                    || p.selector
+                        .as_ref()
+                        .map(|s| s.value_to_message.iter().any(|(_, _, is_list)| *is_list))
+                        .unwrap_or(false)
+            })
+            .unwrap_or(false)
     }
 
     /// Check if the payload for a specific transport value is a list (uses `list<MessageName>` in selector).
-    pub fn payload_is_list_for_transport(&self, transport_values: &std::collections::HashMap<String, crate::value::Value>) -> bool {
+    pub fn payload_is_list_for_transport(
+        &self,
+        transport_values: &std::collections::HashMap<String, crate::value::Value>,
+    ) -> bool {
         if let Some(payload) = &self.protocol.payload {
             if payload.repeated {
                 return true;
@@ -595,7 +720,11 @@ impl ResolvedProtocol {
 
     /// Returns (quantum string if any, child struct name when field is struct or list-of-struct).
     /// Use when dumping: quantum for scalar display; child struct name for recursing into Struct/List values.
-    pub fn field_quantum_and_child(&self, container: &str, field_name: &str) -> (Option<&str>, Option<&str>) {
+    pub fn field_quantum_and_child(
+        &self,
+        container: &str,
+        field_name: &str,
+    ) -> (Option<&str>, Option<&str>) {
         if let Some(msg) = self.get_message(container) {
             if let Some(f) = msg.fields.iter().find(|f| f.name == field_name) {
                 return (f.quantum.as_deref(), type_spec_child_struct(&f.type_spec));
@@ -655,7 +784,11 @@ impl ResolvedProtocol {
     }
 
     /// If the type spec is StructRef(name) and name is an enum, return variant name for the given value.
-    pub fn enum_variant_name_for_type_and_value(&self, type_spec: &TypeSpec, value: i64) -> Option<String> {
+    pub fn enum_variant_name_for_type_and_value(
+        &self,
+        type_spec: &TypeSpec,
+        value: i64,
+    ) -> Option<String> {
         let TypeSpec::StructRef(name) = type_spec else {
             return None;
         };
@@ -670,14 +803,16 @@ impl ResolvedProtocol {
 
     /// If constraint is Enum and the value matches a variant of some protocol enum, returns that variant's name.
     /// Used when dumping: show enum variant name instead of raw number.
-    pub fn enum_variant_name_for_value(&self, constraint: &Constraint, value: i64) -> Option<String> {
+    pub fn enum_variant_name_for_value(
+        &self,
+        constraint: &Constraint,
+        value: i64,
+    ) -> Option<String> {
         let Constraint::Enum(literals) = constraint else {
             return None;
         };
-        let constraint_set: std::collections::HashSet<i64> = literals
-            .iter()
-            .filter_map(|lit| lit.as_i64())
-            .collect();
+        let constraint_set: std::collections::HashSet<i64> =
+            literals.iter().filter_map(|lit| lit.as_i64()).collect();
         if constraint_set.is_empty() || !constraint_set.contains(&value) {
             return None;
         }
