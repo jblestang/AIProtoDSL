@@ -624,6 +624,19 @@ impl ResolvedProtocol {
         None
     }
 
+    /// Returns the constraint for a field from message, struct, or type_def. Used for filter value completion.
+    pub fn field_constraint_any(&self, container: &str, field_name: &str) -> Option<&Constraint> {
+        if let Some(c) = self.field_constraint(container, field_name) {
+            return Some(c);
+        }
+        if let Some(t) = self.get_type_def(container) {
+            if let Some(f) = t.fields.iter().find(|f| f.name == field_name) {
+                return f.constraint.as_ref();
+            }
+        }
+        None
+    }
+
     /// Returns the doc string for a field (from @doc in type or message). Used for GUI tooltips.
     pub fn field_doc(&self, container: &str, field_name: &str) -> Option<&str> {
         if let Some(msg) = self.get_message(container) {

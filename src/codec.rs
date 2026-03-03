@@ -88,7 +88,7 @@ impl Codec {
         };
         let mut cursor = Cursor::new(bytes);
         let mut ctx = DecodeContext::default();
-        let values = match self.decode_message_fields_no_validate(&mut cursor, message_name, msg.fields.as_slice(), &mut ctx) {
+        let values = match self.decode_message_fields_no_validate(&mut cursor, message_name, msg.fields.as_slice(), &mut ctx, None) {
             Ok(v) => v,
             Err(e) => return (cursor.position() as usize, Err(e)),
         };
@@ -103,6 +103,37 @@ impl Codec {
             }
         }
         (consumed, Ok(values))
+    }
+
+    /// Decode a message and return (bytes_consumed, Result<(values, field_spans)>).
+    /// field_spans maps field names to (start_byte, end_byte) offsets relative to the input bytes.
+    pub fn decode_message_with_spans(
+        &self,
+        message_name: &str,
+        bytes: &[u8],
+    ) -> (usize, Result<(HashMap<String, Value>, Vec<(String, usize, usize)>), CodecError>) {
+        let msg = match self.resolved.get_message(message_name) {
+            Some(m) => m,
+            None => return (0, Err(CodecError::UnknownStruct(message_name.to_string()))),
+        };
+        let mut cursor = Cursor::new(bytes);
+        let mut ctx = DecodeContext::default();
+        let mut spans = Vec::new();
+        let values = match self.decode_message_fields_no_validate(&mut cursor, message_name, msg.fields.as_slice(), &mut ctx, Some(&mut spans)) {
+            Ok(v) => v,
+            Err(e) => return (cursor.position() as usize, Err(e)),
+        };
+        let consumed = cursor.position() as usize;
+        for f in &msg.fields {
+            if let Some(ref c) = f.constraint {
+                if let Some(v) = values.get(&f.name) {
+                    if let Err(e) = self.validate_constraint(v, Some(c)) {
+                        return (consumed, Err(e));
+                    }
+                }
+            }
+        }
+        (consumed, Ok((values, spans)))
     }
 
     /// Encode a single message by name. Padding/reserved are written as zero.
@@ -252,8 +283,8 @@ impl Codec {
         message_name: &str,
         fields: &[MessageField],
         ctx: &mut DecodeContext,
+        mut spans: Option<&mut Vec<(String, usize, usize)>>,
     ) -> Result<HashMap<String, Value>, CodecError> {
-        // Bit packing is local to a message: reset bit cursor for this scope.
         let saved_bits = ctx.bit_read;
         ctx.bit_read = BitReadState::default();
         ctx.current_message_name = Some(message_name.to_string());
@@ -266,10 +297,17 @@ impl Codec {
                     continue;
                 }
             }
+            let pos_before = r.position() as usize;
             ctx.current_field_name = Some(f.name.clone());
             let v = self
                 .decode_type_spec(r, &f.type_spec, &self.resolved.protocol.structs, ctx)
                 .map_err(|e| CodecError::Validation(format!("field {}: {}", f.name, e)))?;
+            let pos_after = r.position() as usize;
+            if let Some(ref mut s) = spans {
+                if pos_after > pos_before {
+                    s.push((f.name.clone(), pos_before, pos_after));
+                }
+            }
             ctx.set(f.name.clone(), v.clone());
             out.insert(f.name.clone(), v);
         }
