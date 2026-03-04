@@ -70,7 +70,12 @@ for _, f in ipairs(fields_meta) do
     else
         pf = ftype_func(abbr, name, base.DEC, f.enum, nil, f.doc)
     end
-    proto_fields[f.name] = pf
+    
+    -- Store constraints in a way that we can access them during dissection
+    proto_fields[f.name] = {
+        pf = pf,
+        ranges = f.ranges
+    }
     table.insert(registered_fields, pf)
 end
 my_proto.fields = registered_fields
@@ -221,7 +226,19 @@ local function add_table_to_tree(tree, tbl, offset, buffer, is_list_item)
                         field_len = buffer:len() - field_offset
                     end
 
-                    local function safe_add(t, f, b, v, s)
+                    local function check_ranges(val, ranges)
+                        if not ranges or #ranges == 0 then return true end
+                        local num = tonumber(val)
+                        if not num then return true end
+                        for _, r in ipairs(ranges) do
+                            if num >= r.min and num <= r.max then
+                                return true
+                            end
+                        end
+                        return false
+                    end
+
+                    local function safe_add(t, f, b, v, s, field_key)
                         if type(t) ~= "userdata" then return nil end
                         local status, res = pcall(function()
                             if f then
@@ -233,6 +250,15 @@ local function add_table_to_tree(tree, tbl, offset, buffer, is_list_item)
                         if not status then
                             return nil
                         end
+
+                        if res and field_key and proto_fields[field_key] then
+                            local constraints = proto_fields[field_key].ranges
+                            if constraints and #constraints > 0 then
+                                if not check_ranges(v, constraints) then
+                                    res:add_expert_info(PI_MALFORMED, PI_WARN, "Value " .. tostring(v) .. " is out of DSL range")
+                                end
+                            end
+                        end
                         return res
                     end
 
@@ -240,8 +266,8 @@ local function add_table_to_tree(tree, tbl, offset, buffer, is_list_item)
                             if proto_fields[k] then
                                 local val = v
                                 if type(val) == "boolean" then val = val and 1 or 0 end
-                                local label = string.format("%s: %s", proto_fields[k].name, val_str)
-                                safe_add(tree, proto_fields[k], buffer(field_offset, field_len), val, label)
+                                local label = string.format("%s: %s", proto_fields[k].pf.name, val_str)
+                                safe_add(tree, proto_fields[k].pf, buffer(field_offset, field_len), val, label, k)
                             else
                                 safe_add(tree, nil, buffer(field_offset, field_len), nil, string.format("%s: %s", title, val_str))
                             end
@@ -250,8 +276,8 @@ local function add_table_to_tree(tree, tbl, offset, buffer, is_list_item)
                                 if proto_fields[k] then
                                     local val = v
                                     if type(val) == "boolean" then val = val and 1 or 0 end
-                                    local label = string.format("%s: %s [Truncated]", proto_fields[k].name, val_str)
-                                    safe_add(tree, proto_fields[k], buffer(field_offset, 1), val, label)
+                                    local label = string.format("%s: %s [Truncated]", proto_fields[k].pf.name, val_str)
+                                    safe_add(tree, proto_fields[k].pf, buffer(field_offset, 1), val, label, k)
                                 else
                                     safe_add(tree, nil, buffer(field_offset, 1), nil, string.format("%s: %s [Truncated]", title, val_str))
                                 end

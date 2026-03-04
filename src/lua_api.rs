@@ -66,18 +66,31 @@ impl UserData for ProtocolUserData {
                     f_table.set("quantum", q)?;
                 }
 
-                // Identify if this is an enum
-                let enum_info = proto.field_constraint(container, name);
-                if let Some(crate::ast::Constraint::Enum(variants)) = enum_info {
-                    let vt = lua.create_table()?;
-                    for var in variants {
-                        if let crate::ast::Literal::Int(val) = var {
-                            if let Some(variant_name) = proto.enum_variant_name_for_type_and_value(type_spec, *val) {
-                                vt.set(*val, variant_name)?;
+                // Identify constraints (enum or range)
+                if let Some(constraint) = proto.field_constraint(container, name) {
+                    match constraint {
+                        crate::ast::Constraint::Enum(variants) => {
+                            let vt = lua.create_table()?;
+                            for var in variants {
+                                if let crate::ast::Literal::Int(val) = var {
+                                    if let Some(variant_name) = proto.enum_variant_name_for_type_and_value(type_spec, *val) {
+                                        vt.set(*val, variant_name)?;
+                                    }
+                                }
                             }
+                            f_table.set("enum", vt)?;
+                        }
+                        crate::ast::Constraint::Range(intervals) => {
+                            let rt = lua.create_table()?;
+                            for (i, (min, max)) in intervals.iter().enumerate() {
+                                let interval = lua.create_table()?;
+                                interval.set("min", *min)?;
+                                interval.set("max", *max)?;
+                                rt.set(i + 1, interval)?;
+                            }
+                            f_table.set("ranges", rt)?;
                         }
                     }
-                    f_table.set("enum", vt)?;
                 }
 
                 fields.insert(name.to_string(), f_table);
