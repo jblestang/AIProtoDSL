@@ -25,7 +25,26 @@ fn load_dsl(_: &Lua, filepath: String) -> LuaResult<ProtocolUserData> {
     Ok(ProtocolUserData(Arc::new(resolved)))
 }
 
-fn value_to_lua(lua: &Lua, val: &Value) -> mlua::Result<mlua::Value> {
+fn value_as_i64(v: &Value) -> Option<i64> {
+    match v {
+        Value::U8(x) => Some(*x as i64),
+        Value::U16(x) => Some(*x as i64),
+        Value::U32(x) => Some(*x as i64),
+        Value::U64(x) => (*x).try_into().ok(),
+        Value::I8(x) => Some(*x as i64),
+        Value::I16(x) => Some(*x as i64),
+        Value::I32(x) => Some(*x as i64),
+        Value::I64(x) => Some(*x),
+        _ => None,
+    }
+}
+
+fn value_to_lua<'lua>(
+    lua: &'lua Lua,
+    proto: &ResolvedProtocol,
+    container: Option<&str>,
+    val: &Value,
+) -> mlua::Result<mlua::Value> {
     match val {
         Value::U8(v) => Ok(mlua::Value::Integer(*v as i64)),
         Value::U16(v) => Ok(mlua::Value::Integer(*v as i64)),
@@ -46,14 +65,32 @@ fn value_to_lua(lua: &Lua, val: &Value) -> mlua::Result<mlua::Value> {
         Value::Struct(m) => {
             let t = lua.create_table()?;
             for (k, v) in m {
-                t.set(k.as_str(), value_to_lua(lua, v)?)?;
+                let mut child_container = None;
+                if let Some(c) = container {
+                    let (quantum, child) = proto.field_quantum_and_child(c, k);
+                    if let Some(q) = quantum {
+                        t.set(format!("__quantum_{}", k), q)?;
+                    }
+                    if let Some(doc) = proto.field_doc(c, k) {
+                        t.set(format!("__doc_{}", k), doc)?;
+                    }
+                    if let Some(ts) = proto.field_type_spec(c, k) {
+                        if let Some(n) = value_as_i64(v) {
+                            if let Some(var_name) = proto.enum_variant_name_for_type_and_value(ts, n) {
+                                t.set(format!("__enum_{}", k), var_name)?;
+                            }
+                        }
+                    }
+                    child_container = child;
+                }
+                t.set(k.as_str(), value_to_lua(lua, proto, child_container, v)?)?;
             }
             Ok(mlua::Value::Table(t))
         }
         Value::List(l) => {
             let t = lua.create_table()?;
             for (i, v) in l.iter().enumerate() {
-                t.set(i + 1, value_to_lua(lua, v)?)?; // Lua arrays are 1-indexed
+                t.set(i + 1, value_to_lua(lua, proto, container, v)?)?; // Lua arrays are 1-indexed
             }
             Ok(mlua::Value::Table(t))
         }
@@ -87,7 +124,7 @@ fn dissect_packet(lua: &Lua, (protocol, data): (mlua::AnyUserData, mlua::String)
                 consumed += transport_len;
             }
             
-            t.set("__transport", value_to_lua(lua, &Value::Struct(t_vals.clone()))?)?;
+            t.set("__transport", value_to_lua(lua, _resolved_proto, None, &Value::Struct(t_vals.clone()))?)?;
             t.set("__transport_len", transport_len)?;
             
             // Resolve following payloads using the selector
@@ -117,24 +154,26 @@ fn dissect_packet(lua: &Lua, (protocol, data): (mlua::AnyUserData, mlua::String)
                         
                         let (msg_len, msg_res) = codec.decode_message_with_extent(msg_name, rem);
                         
-                        let msg_t = lua.create_table()?;
-                        msg_t.set("__len", msg_len)?;
-                        
-                        match msg_res {
+                        let msg_t = match msg_res {
                             Ok(msg_vals) => {
-                                for (k, v) in msg_vals {
-                                    msg_t.set(k, value_to_lua(lua, &v)?)?;
+                                match value_to_lua(lua, _resolved_proto, Some(msg_name), &Value::Struct(msg_vals))? {
+                                    mlua::Value::Table(tbl) => tbl,
+                                    _ => lua.create_table()?,
                                 }
                             }
                             Err(e) => {
-                                msg_t.set("__error", e.to_string())?;
-                                payloads.set(idx, msg_t)?;
-                                break; // Stop decoding on error
+                                let tbl = lua.create_table()?;
+                                tbl.set("__error", e.to_string())?;
+                                tbl
                             }
-                        }
+                        };
+                        msg_t.set("__len", msg_len)?;
                         
+                        let had_error = msg_t.contains_key("__error")?;
                         payloads.set(idx, msg_t)?;
                         idx += 1;
+                        
+                        if had_error { break; }
                         if msg_len == 0 || msg_len > rem.len() { break; } // Prevent infinite loops or overruns
                         consumed += msg_len;
                     }
@@ -143,18 +182,20 @@ fn dissect_packet(lua: &Lua, (protocol, data): (mlua::AnyUserData, mlua::String)
                     // Single message payload
                     let rem = &bytes[consumed..];
                     let (msg_len, msg_res) = codec.decode_message_with_extent(msg_name, rem);
-                    let msg_t = lua.create_table()?;
-                    msg_t.set("__len", msg_len)?;
-                    match msg_res {
+                    let msg_t = match msg_res {
                         Ok(msg_vals) => {
-                            for (k, v) in msg_vals {
-                                msg_t.set(k, value_to_lua(lua, &v)?)?;
+                            match value_to_lua(lua, _resolved_proto, Some(msg_name), &Value::Struct(msg_vals))? {
+                                mlua::Value::Table(tbl) => tbl,
+                                _ => lua.create_table()?,
                             }
                         }
                         Err(e) => {
-                            msg_t.set("__error", e.to_string())?;
+                            let tbl = lua.create_table()?;
+                            tbl.set("__error", e.to_string())?;
+                            tbl
                         }
-                    }
+                    };
+                    msg_t.set("__len", msg_len)?;
                     t.set("payload", msg_t)?;
                 }
             }

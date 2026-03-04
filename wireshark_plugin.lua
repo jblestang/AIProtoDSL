@@ -40,68 +40,125 @@ end
 
 local my_proto = Proto("aiprotodsl", "AIProtoDSL Native Dissector")
 
-function add_table_to_tree(tree, t, offset, buffer, is_array)
-    for k, v in pairs(t) do
+local function add_table_to_tree(tree, tbl, offset, buffer, is_list_item)
+    -- If it's a list item, we don't need to sort keys necessarily, but for tables we might
+    local keys = {}
+    for k in pairs(tbl) do
+        if type(k) == "number" or (type(k) == "string" and k:sub(1, 2) ~= "__") then
+            table.insert(keys, k)
+        end
+    end
+    -- Sort keys for better readability (strings then numbers, or customizable)
+    table.sort(keys, function(a, b)
+        if type(a) == type(b) then return a < b end
+        return type(a) == "string"
+    end)
+
+    for _, k in ipairs(keys) do
+        local v = tbl[k]
         if type(v) == "table" then
-            if type(k) == "number" or is_array then
-                local arr_tree = tree:add(my_proto, buffer(offset), "Item " .. tostring(k))
-                add_table_to_tree(arr_tree, v, offset, buffer, k == "payloads")
-            else
-                local sub = tree:add(my_proto, buffer(offset), tostring(k))
-                add_table_to_tree(sub, v, offset, buffer, k == "payloads")
+            local subtree_name = tostring(k)
+            if type(k) == "string" and tbl["__doc_" .. k] then
+                subtree_name = tbl["__doc_" .. k] .. " (" .. k .. ")"
+            elseif type(k) == "number" and is_list_item then
+                subtree_name = "Item " .. tostring(k)
             end
-        else
-            -- It's a primitive value
-            -- For keys starting with __ (metadata), we might display them differently or skip
-            if type(k) == "string" and string.sub(k, 1, 2) == "__" then
-                if k == "__message_type" then
-                    tree:add(my_proto, buffer(offset), "Message Type: " .. tostring(v))
-                elseif k == "__error" then
-                    tree:add_expert_info(PI_MALFORMED, PI_ERROR, "Error: " .. tostring(v))
-                end
-                -- skip others like __len
+            
+            local subtree
+            -- Use the actual length if the rust module provided it via `__len`
+            if v.__len then
+                subtree = tree:add(my_proto, buffer(offset, v.__len), subtree_name)
+                offset = offset + v.__len
             else
+                subtree = tree:add(my_proto, buffer(offset), subtree_name)
+            end
+            
+            -- Pass true if this is a list containing only numeric keys
+            local child_is_list = false
+            if v[1] ~= nil then child_is_list = true end
+            
+            add_table_to_tree(subtree, v, offset - (v.__len or 0), buffer, child_is_list)
+        else
+            if type(k) == "string" and k:sub(1, 2) == "__" then
+                -- Skip internal keys
+            else
+                local title = tostring(k)
                 local val_str = tostring(v)
-                if type(v) == "number" then
-                    val_str = string.format("%d (0x%X)", v, v)
+                
+                if type(k) == "string" then
+                    local doc_str = tbl["__doc_" .. k]
+                    local q_str = tbl["__quantum_" .. k]
+                    local enum_str = tbl["__enum_" .. k]
+                    
+                    if enum_str then
+                        val_str = string.format("%s (%s)", tostring(v), enum_str)
+                    elseif q_str then
+                        -- Quantum is expressed as e.g. "1/256 NM" or "1 s"
+                        -- We can use a simple pattern to extract float values
+                        local num, den, unit = string.match(q_str, "(%d+)/(%d+)%s*(.*)")
+                        if num and den then
+                            local multiplier = tonumber(num) / tonumber(den)
+                            local float_val = tonumber(v) * multiplier
+                            val_str = string.format("%g %s (raw: %s)", float_val, unit or "", tostring(v))
+                        else
+                            local num2, unit2 = string.match(q_str, "(%d+%.?%d*)%s*(.*)")
+                            if num2 then
+                                local float_val = tonumber(v) * tonumber(num2)
+                                val_str = string.format("%g %s (raw: %s)", float_val, unit2 or "", tostring(v))
+                            else
+                                val_str = string.format("%s [%s]", tostring(v), q_str)
+                            end
+                        end
+                    elseif type(v) == "number" then
+                        val_str = string.format("%s (0x%X)", tostring(v), v)
+                    end
+                    
+                    if doc_str then
+                        title = doc_str .. " (" .. k .. ")"
+                    end
                 end
-                tree:add(my_proto, buffer(offset), string.format("%s: %s", tostring(k), val_str))
+                
+                tree:add(my_proto, buffer(offset), string.format("%s: %s", title, val_str))
             end
         end
     end
 end
 
+local f_udp_payload = Field.new("udp.payload")
+
 function my_proto.dissector(buffer, pinfo, tree)
-    -- In heuristic mode, buffer is the UDP payload
-    local len = buffer:len()
-    if len < 3 then return false end
+    -- As a post-dissector, `buffer` is the full root frame. 
+    -- We want only the UDP payload for ASTERIX.
+    local udp_payload_info = f_udp_payload()
+    if not udp_payload_info then return end -- Not a UDP packet or no payload
     
-    local ret_table = dsl_lib.dissect_packet(protocol_userdata, buffer:raw())
+    local payload_tvb = udp_payload_info.range
+    local len = payload_tvb:len()
+    if len < 3 then return end
+    
+    -- Pass the raw UDP bytes to Rust
+    local ret_table = dsl_lib.dissect_packet(protocol_userdata, payload_tvb:raw())
     
     if type(ret_table) == "table" and ret_table.__transport then
-        -- Heuristic check: does the transport length make sense?
+        -- Validate heuristic Transport
         local t_len = ret_table.__transport_len
         if t_len and t_len > 0 and t_len <= len then
+            -- Override protocol column
             pinfo.cols.protocol = "AIProtoDSL"
-            local subtree = tree:add(my_proto, buffer(), "Dynamic Protocol Data (Cat " .. tostring(ret_table.__transport.category) .. ")")
+            
+            -- Add Tree directly attached to the UDP payload range
+            local subtree = tree:add(my_proto, payload_tvb, "Dynamic Protocol Data (Cat " .. tostring(ret_table.__transport.category) .. ")")
             
             if ret_table.__error then
                 subtree:add_expert_info(PI_MALFORMED, PI_ERROR, "Rust failed to dissect: " .. ret_table.__error)
             else
-                add_table_to_tree(subtree, ret_table, 0, buffer, false)
+                add_table_to_tree(subtree, ret_table, 0, payload_tvb, false)
             end
-            return true
         end
     end
-    
-    return false
 end
 
--- Register as a heuristic dissector over UDP so we get the UDP payload
-my_proto:register_heuristic("udp", my_proto.dissector)
-
--- Optionally, register a specific port if known:
-local udp_port = DissectorTable.get("udp.port")
-udp_port:add(22131, my_proto)
--- Also bind to standard asterix ports just in case
-udp_port:add(8600, my_proto)
+-- Safely and universally register as a post-dissector.
+-- This ensures we don't fight with Wireshark's native Asterix dissector 
+-- and we evaluate all UDP packets universally!
+register_postdissector(my_proto)
