@@ -72,24 +72,36 @@ function add_table_to_tree(tree, t, offset, buffer, is_array)
 end
 
 function my_proto.dissector(buffer, pinfo, tree)
-    -- print(string.format("[Native Lua] Dissecting %d bytes on port %d", buffer:len(), pinfo.dst_port))
-    pinfo.cols.protocol = "AIProtoDSL"
-    local subtree = tree:add(my_proto, buffer(), "Dynamic Protocol Data")
+    -- In heuristic mode, buffer is the UDP payload
+    local len = buffer:len()
+    if len < 3 then return false end
     
-    -- In standard Lua binding, `buffer:raw()` returns a standard Lua string
-    -- which `mlua` can map over effortlessly to standard u8 slices.
     local ret_table = dsl_lib.dissect_packet(protocol_userdata, buffer:raw())
     
-    if type(ret_table) == "table" then
-        if ret_table.__error then
-            subtree:add_expert_info(PI_MALFORMED, PI_ERROR, "Rust failed to dissect packet: " .. ret_table.__error)
-        else
-            add_table_to_tree(subtree, ret_table, 0, buffer, false)
+    if type(ret_table) == "table" and ret_table.__transport then
+        -- Heuristic check: does the transport length make sense?
+        local t_len = ret_table.__transport_len
+        if t_len and t_len > 0 and t_len <= len then
+            pinfo.cols.protocol = "AIProtoDSL"
+            local subtree = tree:add(my_proto, buffer(), "Dynamic Protocol Data (Cat " .. tostring(ret_table.__transport.category) .. ")")
+            
+            if ret_table.__error then
+                subtree:add_expert_info(PI_MALFORMED, PI_ERROR, "Rust failed to dissect: " .. ret_table.__error)
+            else
+                add_table_to_tree(subtree, ret_table, 0, buffer, false)
+            end
+            return true
         end
-    else
-        subtree:add_expert_info(PI_MALFORMED, PI_ERROR, "Rust returned invalid type")
     end
+    
+    return false
 end
 
--- Register as postdissector so we can catch it anywhere (default dissectors run first)
-register_postdissector(my_proto)
+-- Register as a heuristic dissector over UDP so we get the UDP payload
+my_proto:register_heuristic("udp", my_proto.dissector)
+
+-- Optionally, register a specific port if known:
+local udp_port = DissectorTable.get("udp.port")
+udp_port:add(22131, my_proto)
+-- Also bind to standard asterix ports just in case
+udp_port:add(8600, my_proto)
