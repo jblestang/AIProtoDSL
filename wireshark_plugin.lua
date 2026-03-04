@@ -70,14 +70,29 @@ local function add_table_to_tree(tree, tbl, offset, buffer, is_list_item)
                 subtree = tree:add(my_proto, buffer(offset, v.__len), subtree_name)
                 offset = offset + v.__len
             else
-                subtree = tree:add(my_proto, buffer(offset), subtree_name)
+                local field_offset = offset
+                local field_len = 0
+                if type(k) == "string" and tbl["__offset_" .. k] and tbl["__len_" .. k] then
+                    field_offset = offset + tonumber(tbl["__offset_" .. k])
+                    field_len = tonumber(tbl["__len_" .. k])
+                end
+                
+                if field_len > 0 then
+                    subtree = tree:add(my_proto, buffer(field_offset, field_len), subtree_name)
+                else
+                    subtree = tree:add(my_proto, buffer(offset), subtree_name)
+                end
             end
             
             -- Pass true if this is a list containing only numeric keys
             local child_is_list = false
             if v[1] ~= nil then child_is_list = true end
             
-            add_table_to_tree(subtree, v, offset - (v.__len or 0), buffer, child_is_list)
+            if v.__len then
+                add_table_to_tree(subtree, v, offset - v.__len, buffer, child_is_list)
+            else
+                add_table_to_tree(subtree, v, offset, buffer, child_is_list)
+            end
         else
             if type(k) == "string" and k:sub(1, 2) == "__" then
                 -- Skip internal keys
@@ -118,7 +133,19 @@ local function add_table_to_tree(tree, tbl, offset, buffer, is_list_item)
                     end
                 end
                 
-                tree:add(my_proto, buffer(offset), string.format("%s: %s", title, val_str))
+                local field_offset = offset
+                local field_len = 0
+                
+                if type(k) == "string" then
+                    if tbl["__offset_" .. k] then field_offset = offset + tonumber(tbl["__offset_" .. k]) end
+                    if tbl["__len_" .. k]    then field_len    = tonumber(tbl["__len_" .. k]) end
+                end
+                
+                if field_len > 0 then
+                    tree:add(my_proto, buffer(field_offset, field_len), string.format("%s: %s", title, val_str))
+                else
+                    tree:add(my_proto, buffer(field_offset), string.format("%s: %s", title, val_str))
+                end
             end
         end
     end

@@ -271,11 +271,19 @@ impl Codec {
                 }
             }
             ctx.current_field_name = Some(f.name.clone());
+            let start_byte = r.position() as usize;
+            
             let v = self
                 .decode_type_spec(r, &f.type_spec, &self.resolved.protocol.structs, ctx)
                 .map_err(|e| CodecError::Validation(format!("field {}: {}", f.name, e)))?;
+                
+            let end_byte = r.position() as usize;
+            let byte_len = if end_byte > start_byte { end_byte - start_byte } else { 1 };
+            
             ctx.set(f.name.clone(), v.clone());
             out.insert(f.name.clone(), v);
+            out.insert(format!("__offset_{}", f.name), Value::U64(start_byte as u64));
+            out.insert(format!("__len_{}", f.name), Value::U64(byte_len as u64));
         }
         ctx.current_message_name = None;
         ctx.current_field_name = None;
@@ -1118,6 +1126,7 @@ impl Codec {
                 }
             }
             // Optional with condition that matched: decode inner type directly (no bitmap presence read).
+            let start_byte = r.position() as usize;
             let v = if let Some(ref _cond) = f.condition {
                 if let TypeSpec::Optional(elem) = &f.type_spec {
                     let inner = self.decode_type_spec(r, elem, structs, ctx).map_err(|e| {
@@ -1134,9 +1143,14 @@ impl Codec {
                 self.decode_type_spec(r, &f.type_spec, structs, ctx)
                     .map_err(|e| CodecError::Validation(format!("{}.{}: {}", s.name, f.name, e)))?
             };
+            let end_byte = r.position() as usize;
+            let byte_len = if end_byte > start_byte { end_byte - start_byte } else { 1 };
+            
             self.validate_constraint(&v, f.constraint.as_ref())?;
             ctx.set(f.name.clone(), v.clone());
             out.insert(f.name.clone(), v);
+            out.insert(format!("__offset_{}", f.name), Value::U64(start_byte as u64));
+            out.insert(format!("__len_{}", f.name), Value::U64(byte_len as u64));
         }
         ctx.bit_read = saved_bits;
         // Pop any presence state pushed while decoding this struct (e.g. nested bitmap_presence).
