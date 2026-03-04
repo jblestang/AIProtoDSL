@@ -159,9 +159,15 @@ impl Codec {
     ) -> Result<HashMap<String, Value>, CodecError> {
         let mut out = HashMap::new();
         for f in fields {
+            let start_byte = r.position() as usize;
             let v = self.decode_transport_type(r, &f.type_spec)?;
+            let end_byte = r.position() as usize;
+            let byte_len = if end_byte > start_byte { end_byte - start_byte } else { 1 };
+            
             self.validate_constraint(&v, f.constraint.as_ref())?;
-            out.insert(f.name.clone(), v);
+            out.insert(f.name.clone(), v.clone());
+            out.insert(format!("__offset_{}", f.name), Value::U64(start_byte as u64));
+            out.insert(format!("__len_{}", f.name), Value::U64(byte_len as u64));
         }
         Ok(out)
     }

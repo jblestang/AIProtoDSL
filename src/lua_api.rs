@@ -74,10 +74,19 @@ fn value_to_lua<'lua>(
                     if let Some(doc) = proto.field_doc(c, k) {
                         t.set(format!("__doc_{}", k), doc)?;
                     }
-                    if let Some(ts) = proto.field_type_spec(c, k) {
-                        if let Some(n) = value_as_i64(v) {
+                    if let Some(n) = value_as_i64(v) {
+                        let mut enum_resolved = false;
+                        if let Some(ts) = proto.field_type_spec(c, k) {
                             if let Some(var_name) = proto.enum_variant_name_for_type_and_value(ts, n) {
                                 t.set(format!("__enum_{}", k), var_name)?;
+                                enum_resolved = true;
+                            }
+                        }
+                        if !enum_resolved {
+                            if let Some(constraint) = proto.field_constraint(c, k) {
+                                if let Some(var_name) = proto.enum_variant_name_for_value(constraint, n) {
+                                    t.set(format!("__enum_{}", k), var_name)?;
+                                }
                             }
                         }
                     }
@@ -124,8 +133,10 @@ fn dissect_packet(lua: &Lua, (protocol, data): (mlua::AnyUserData, mlua::String)
                 consumed += transport_len;
             }
             
-            t.set("__transport", value_to_lua(lua, _resolved_proto, None, &Value::Struct(t_vals.clone()))?)?;
+            t.set("Transport Header", value_to_lua(lua, _resolved_proto, None, &Value::Struct(t_vals.clone()))?)?;
             t.set("__transport_len", transport_len)?;
+            t.set("__offset_Transport Header", 0)?;
+            t.set("__len_Transport Header", transport_len)?;
             
             // Resolve following payloads using the selector
             if let Some(msg_name) = _resolved_proto.message_for_transport_values(&t_vals) {

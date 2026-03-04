@@ -106,7 +106,7 @@ local function add_table_to_tree(tree, tbl, offset, buffer, is_list_item)
                     local enum_str = tbl["__enum_" .. k]
                     
                     if enum_str then
-                        val_str = string.format("%s (%s)", tostring(v), enum_str)
+                        val_str = string.format("%s (%s)", enum_str, tostring(v))
                     elseif q_str then
                         -- Quantum is expressed as e.g. "1/256 NM" or "1 s"
                         -- We can use a simple pattern to extract float values
@@ -166,7 +166,7 @@ function my_proto.dissector(buffer, pinfo, tree)
     -- Pass the raw UDP bytes to Rust
     local ret_table = dsl_lib.dissect_packet(protocol_userdata, payload_tvb:raw())
     
-    if type(ret_table) == "table" and ret_table.__transport then
+    if type(ret_table) == "table" and ret_table["Transport Header"] then
         -- Validate heuristic Transport
         local t_len = ret_table.__transport_len
         if t_len and t_len > 0 and t_len <= len then
@@ -174,7 +174,7 @@ function my_proto.dissector(buffer, pinfo, tree)
             pinfo.cols.protocol = "AIProtoDSL"
             
             -- Add Tree directly attached to the UDP payload range
-            local subtree = tree:add(my_proto, payload_tvb, "Dynamic Protocol Data (Cat " .. tostring(ret_table.__transport.category) .. ")")
+            local subtree = tree:add(my_proto, payload_tvb, "Dynamic Protocol Data (Cat " .. tostring(ret_table["Transport Header"].category) .. ")")
             
             if ret_table.__error then
                 subtree:add_expert_info(PI_MALFORMED, PI_ERROR, "Rust failed to dissect: " .. ret_table.__error)
