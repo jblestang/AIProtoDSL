@@ -83,7 +83,7 @@ local function add_table_to_tree(tree, tbl, offset, buffer, is_list_item)
             if type(v) == "table" then
                 local subtree_name = tostring(k)
                 if type(k) == "string" and tbl["__doc_" .. k] then
-                    subtree_name = tbl["__doc_" .. k] .. " (" .. k .. ")"
+                    subtree_name = k .. " (" .. tbl["__doc_" .. k] .. ")"
                 elseif type(k) == "number" and is_list_item then
                     subtree_name = "Item " .. tostring(k)
                 end
@@ -147,7 +147,7 @@ local function add_table_to_tree(tree, tbl, offset, buffer, is_list_item)
                         end
                         
                         if doc_str and doc_str ~= "" then
-                            title = doc_str .. " (" .. k .. ")"
+                            title = k .. " (" .. doc_str .. ")"
                         end
                     end
                     
