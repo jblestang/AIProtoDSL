@@ -41,6 +41,7 @@
 //!
 //! See the [README](https://github.com/yourusername/AIProtoDSL) and the `tests/integration.rs` for full examples.
 pub mod ast;
+pub mod lua_api;
 pub mod compiler;
 pub mod vm;
 
@@ -53,6 +54,7 @@ pub mod lint;
 pub mod parser;
 pub mod value;
 pub mod walk;
+pub mod wireshark;
 
 pub use ast::{
     AbstractType, BitmapPresenceMapping, PaddingKind, Protocol, ResolvedProtocol, TypeDefSection,
@@ -72,3 +74,4 @@ pub use walk::{
     validate_and_zero_message_in_place, validate_message_in_place, write_u32_in_place,
     zero_padding_reserved_in_place, BinaryWalker, BinaryWalkerMut, Endianness as WalkEndianness,
 };
+pub use wireshark::generate_lua_dissector;

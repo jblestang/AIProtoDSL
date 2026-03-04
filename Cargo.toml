@@ -10,6 +10,9 @@ readme = "README.md"
 keywords = ["protocol", "dsl", "binary", "codec", "serialization"]
 categories = ["encoding", "parser-implementations"]
 
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [features]
 default = []
 gui = ["eframe", "rfd"]
@@ -23,6 +26,7 @@ thiserror = "1.0"
 anyhow = "1.0"
 byteorder = "1.5"
 pcap-parser = "0.17"
+mlua = { version = "0.11", features = ["lua54", "module"] }
 eframe = { version = "0.29", optional = true }
 rfd = { version = "0.14", optional = true }
 
