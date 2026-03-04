@@ -7,6 +7,7 @@
 //   https://eurocontrol.int/publication/cat240-eurocontrol-specification-surveillance-data-exchange-asterix
 // See docs/asterix_eurocontrol_references.md for a table and direct PDF links.
 
+
 transport {
 	category: u8 [0..255];
 	length: u16 [0..65535];
@@ -48,9 +49,9 @@ enum Cat002MessageType {
 // Abstract types (logical model) and encoding structs below follow EUROCONTROL data items
 // (e.g. I048/010 Data Source Identifier, I048/040 Measured Position). Fields map to spec subfields.
 type DataSourceId {
-	@doc "System Area Code (SAC); part of Data Source Identifier"
+	@doc "System Area Code (SAC)"
 	sac: integer [0..255];
-	@doc "System Identification Code (SIC); part of Data Source Identifier"
+	@doc "System Identification Code (SIC)"
 	sic: integer [0..255];
 }
 

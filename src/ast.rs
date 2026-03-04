@@ -789,9 +789,18 @@ impl ResolvedProtocol {
         type_spec: &TypeSpec,
         value: i64,
     ) -> Option<String> {
-        let TypeSpec::StructRef(name) = type_spec else {
-            return None;
+        let name = match type_spec {
+            TypeSpec::StructRef(n) => n,
+            TypeSpec::Optional(inner) => {
+                if let TypeSpec::StructRef(n) = &**inner {
+                    n
+                } else {
+                    return None;
+                }
+            }
+            _ => return None,
         };
+        
         let enum_sec = self.get_enum(name)?;
         for (variant_name, lit) in &enum_sec.variants {
             if lit.as_i64() == Some(value) {

@@ -35,6 +35,7 @@ fn value_as_i64(v: &Value) -> Option<i64> {
         Value::I16(x) => Some(*x as i64),
         Value::I32(x) => Some(*x as i64),
         Value::I64(x) => Some(*x),
+        Value::List(l) if l.len() == 1 => value_as_i64(&l[0]),
         _ => None,
     }
 }
@@ -112,62 +113,116 @@ fn dissect_packet(lua: &Lua, (protocol, data): (mlua::AnyUserData, mlua::String)
     let resolved = protocol.borrow::<ProtocolUserData>()?;
     let _resolved_proto = &resolved.0;
     
-    // Get the raw byte slice from the Lua string
     let bytes = data.as_bytes();
-    
     let codec = Codec::new((**_resolved_proto).clone(), Endianness::Big);
     
-    // Attempt to decode the generic transport first
-    let transport_result = codec.decode_transport(bytes.as_ref());
-    
-    let t = lua.create_table()?;
-    match transport_result {
-        Ok(t_vals) => {
-            let (mut consumed, mut transport_len) = (0, 0);
-            
-            // If the transport wasn't empty, let's just guess its length or put it in natively?
-            // Actually, we can encode it back to get its length for now, or assume the first N bytes.
-            // A small trick: re-encode transport to find its byte-length.
-            if let Ok(enc_t) = codec.encode_transport(&t_vals) {
-                transport_len = enc_t.len();
-                consumed += transport_len;
-            }
-            
-            t.set("Transport Header", value_to_lua(lua, _resolved_proto, None, &Value::Struct(t_vals.clone()))?)?;
-            t.set("__transport_len", transport_len)?;
-            t.set("__offset_Transport Header", 0)?;
-            t.set("__len_Transport Header", transport_len)?;
-            
-            // Resolve following payloads using the selector
-            if let Some(msg_name) = _resolved_proto.message_for_transport_values(&t_vals) {
-                t.set("__message_type", msg_name)?;
+    let results = lua.create_table()?;
+    let mut offset = 0;
+    let mut block_idx = 1;
+
+    while offset < bytes.len() {
+        let rem_bytes = &bytes[offset..];
+        let transport_result = codec.decode_transport(rem_bytes);
+        
+        let t = lua.create_table()?;
+        match transport_result {
+            Ok(t_vals) => {
+                let (mut consumed, mut transport_len) = (0, 0);
+                if let Ok(enc_t) = codec.encode_transport(&t_vals) {
+                    transport_len = enc_t.len();
+                    consumed += transport_len;
+                }
                 
-                let is_list = _resolved_proto.payload_is_list_for_transport(&t_vals);
+                t.set("Transport Header", value_to_lua(lua, _resolved_proto, None, &Value::Struct(t_vals.clone()))?)?;
+                t.set("__transport_len", transport_len)?;
+                t.set("__offset_Transport Header", offset as u64)?;
+                t.set("__len_Transport Header", transport_len as u64)?;
                 
-                if is_list {
-                    let payloads = lua.create_table()?;
-                    let mut idx = 1;
+                let mut block_limit = rem_bytes.len();
+                if let Some(Value::U64(len)) = t_vals.get("length").or_else(|| t_vals.get("len")) {
+                    block_limit = (*len as usize).min(rem_bytes.len());
+                } else if let Some(Value::U32(len)) = t_vals.get("length").or_else(|| t_vals.get("len")) {
+                    block_limit = (*len as usize).min(rem_bytes.len());
+                } else if let Some(Value::U16(len)) = t_vals.get("length").or_else(|| t_vals.get("len")) {
+                    block_limit = (*len as usize).min(rem_bytes.len());
+                }
+                
+                let mut transport_valid = false;
+                if let Some(msg_name) = _resolved_proto.message_for_transport_values(&t_vals) {
+                    transport_valid = true;
+                    t.set("__message_type", msg_name)?;
+                    let is_list = _resolved_proto.payload_is_list_for_transport(&t_vals);
                     
-                    let mut payload_limit = bytes.len();
-                    // If the transport layer has a `length` field, limit our decode loop to that length
-                    // to avoid overrunning into Ethernet padding or trailer bytes.
-                    if let Some(Value::U64(len)) = t_vals.get("length").or_else(|| t_vals.get("len")) {
-                        payload_limit = (*len as usize).min(bytes.len());
-                    } else if let Some(Value::U32(len)) = t_vals.get("length").or_else(|| t_vals.get("len")) {
-                        payload_limit = (*len as usize).min(bytes.len());
-                    } else if let Some(Value::U16(len)) = t_vals.get("length").or_else(|| t_vals.get("len")) {
-                        payload_limit = (*len as usize).min(bytes.len());
-                    }
-                    
-                    while consumed < payload_limit {
-                        let rem = &bytes[consumed..payload_limit];
-                        if rem.is_empty() { break; }
+                    if is_list {
+                        let payloads = lua.create_table()?;
+                        let mut p_idx = 1;
                         
-                        let (msg_len, msg_res) = codec.decode_message_with_extent(msg_name, rem);
-                        
+                        while consumed < block_limit {
+                            let p_rem = &rem_bytes[consumed..block_limit];
+                            if p_rem.is_empty() { break; }
+                            
+                            let (msg_len, msg_res) = codec.decode_message_with_extent(msg_name, p_rem);
+                            let msg_t = match msg_res {
+                                Ok(msg_vals) => {
+                                    let mut adjusted_vals = msg_vals;
+                                    for (k, v) in adjusted_vals.iter_mut() {
+                                        if k.starts_with("__offset_") {
+                                            if let Value::U64(off) = v {
+                                                *off += (offset + consumed) as u64;
+                                            }
+                                        } else if let Value::Struct(m) = v {
+                                            for (sk, sv) in m.iter_mut() {
+                                                if sk.starts_with("__offset_") {
+                                                    if let Value::U64(off) = sv {
+                                                        *off += (offset + consumed) as u64;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    match value_to_lua(lua, _resolved_proto, Some(msg_name), &Value::Struct(adjusted_vals))? {
+                                        mlua::Value::Table(tbl) => tbl,
+                                        _ => lua.create_table()?,
+                                    }
+                                }
+                                Err(e) => {
+                                    let tbl = lua.create_table()?;
+                                    tbl.set("__error", e.to_string())?;
+                                    tbl
+                                }
+                            };
+                            msg_t.set("__len", msg_len)?;
+                            let had_error = msg_t.contains_key("__error")?;
+                            payloads.set(p_idx, msg_t)?;
+                            p_idx += 1;
+                            
+                            if had_error { break; }
+                            if msg_len == 0 || msg_len > p_rem.len() { break; }
+                            consumed += msg_len;
+                        }
+                        t.set("payloads", payloads)?;
+                    } else {
+                        let p_rem = &rem_bytes[consumed..block_limit];
+                        let (msg_len, msg_res) = codec.decode_message_with_extent(msg_name, p_rem);
                         let msg_t = match msg_res {
                             Ok(msg_vals) => {
-                                match value_to_lua(lua, _resolved_proto, Some(msg_name), &Value::Struct(msg_vals))? {
+                                let mut adjusted_vals = msg_vals;
+                                for (k, v) in adjusted_vals.iter_mut() {
+                                    if k.starts_with("__offset_") {
+                                        if let Value::U64(off) = v {
+                                            *off += (offset + consumed) as u64;
+                                        }
+                                    } else if let Value::Struct(m) = v {
+                                        for (sk, sv) in m.iter_mut() {
+                                            if sk.starts_with("__offset_") {
+                                                if let Value::U64(off) = sv {
+                                                    *off += (offset + consumed) as u64;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                match value_to_lua(lua, _resolved_proto, Some(msg_name), &Value::Struct(adjusted_vals))? {
                                     mlua::Value::Table(tbl) => tbl,
                                     _ => lua.create_table()?,
                                 }
@@ -179,44 +234,27 @@ fn dissect_packet(lua: &Lua, (protocol, data): (mlua::AnyUserData, mlua::String)
                             }
                         };
                         msg_t.set("__len", msg_len)?;
-                        
-                        let had_error = msg_t.contains_key("__error")?;
-                        payloads.set(idx, msg_t)?;
-                        idx += 1;
-                        
-                        if had_error { break; }
-                        if msg_len == 0 || msg_len > rem.len() { break; } // Prevent infinite loops or overruns
+                        t.set("payload", msg_t)?;
                         consumed += msg_len;
                     }
-                    t.set("payloads", payloads)?;
-                } else {
-                    // Single message payload
-                    let rem = &bytes[consumed..];
-                    let (msg_len, msg_res) = codec.decode_message_with_extent(msg_name, rem);
-                    let msg_t = match msg_res {
-                        Ok(msg_vals) => {
-                            match value_to_lua(lua, _resolved_proto, Some(msg_name), &Value::Struct(msg_vals))? {
-                                mlua::Value::Table(tbl) => tbl,
-                                _ => lua.create_table()?,
-                            }
-                        }
-                        Err(e) => {
-                            let tbl = lua.create_table()?;
-                            tbl.set("__error", e.to_string())?;
-                            tbl
-                        }
-                    };
-                    msg_t.set("__len", msg_len)?;
-                    t.set("payload", msg_t)?;
                 }
+                
+                t.set("__block_len", block_limit)?;
+                results.set(block_idx, t)?;
+                block_idx += 1;
+                
+                if block_limit == 0 { break; }
+                offset += block_limit;
             }
-        }
-        Err(e) => {
-            t.set("__error", e.to_string())?;
+            Err(e) => {
+                t.set("__error", e.to_string())?;
+                results.set(block_idx, t)?;
+                break;
+            }
         }
     }
 
-    Ok(mlua::Value::Table(t))
+    Ok(mlua::Value::Table(results))
 }
 
 /// This is the entry point that `package.loadlib` calls.

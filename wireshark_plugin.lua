@@ -73,14 +73,22 @@ local function add_table_to_tree(tree, tbl, offset, buffer, is_list_item)
                 local field_offset = offset
                 local field_len = 0
                 if type(k) == "string" and tbl["__offset_" .. k] and tbl["__len_" .. k] then
-                    field_offset = offset + tonumber(tbl["__offset_" .. k])
+                    field_offset = tonumber(tbl["__offset_" .. k])
                     field_len = tonumber(tbl["__len_" .. k])
+                end
+                
+                if field_offset >= buffer:len() then
+                    field_offset = buffer:len() - 1
+                    field_len = 0
+                end
+                if field_offset + field_len > buffer:len() then
+                    field_len = buffer:len() - field_offset
                 end
                 
                 if field_len > 0 then
                     subtree = tree:add(my_proto, buffer(field_offset, field_len), subtree_name)
                 else
-                    subtree = tree:add(my_proto, buffer(offset), subtree_name)
+                    subtree = tree:add(my_proto, buffer(field_offset, 1), subtree_name .. " [Truncated]")
                 end
             end
             
@@ -141,6 +149,14 @@ local function add_table_to_tree(tree, tbl, offset, buffer, is_list_item)
                     if tbl["__len_" .. k]    then field_len    = tonumber(tbl["__len_" .. k]) end
                 end
                 
+                if field_offset >= buffer:len() then
+                    field_offset = buffer:len() - 1
+                    field_len = 0
+                end
+                if field_offset + field_len > buffer:len() then
+                    field_len = buffer:len() - field_offset
+                end
+
                 if field_len > 0 then
                     tree:add(my_proto, buffer(field_offset, field_len), string.format("%s: %s", title, val_str))
                 else
@@ -164,22 +180,30 @@ function my_proto.dissector(buffer, pinfo, tree)
     if len < 3 then return end
     
     -- Pass the raw UDP bytes to Rust
-    local ret_table = dsl_lib.dissect_packet(protocol_userdata, payload_tvb:raw())
+    local ret_tables = dsl_lib.dissect_packet(protocol_userdata, payload_tvb:raw())
     
-    if type(ret_table) == "table" and ret_table["Transport Header"] then
-        -- Validate heuristic Transport
-        local t_len = ret_table.__transport_len
-        if t_len and t_len > 0 and t_len <= len then
-            -- Override protocol column
-            pinfo.cols.protocol = "AIProtoDSL"
-            
-            -- Add Tree directly attached to the UDP payload range
-            local subtree = tree:add(my_proto, payload_tvb, "Dynamic Protocol Data (Cat " .. tostring(ret_table["Transport Header"].category) .. ")")
-            
-            if ret_table.__error then
-                subtree:add_expert_info(PI_MALFORMED, PI_ERROR, "Rust failed to dissect: " .. ret_table.__error)
-            else
-                add_table_to_tree(subtree, ret_table, 0, payload_tvb, false)
+    if type(ret_tables) == "table" then
+        -- Iterate over array of transport blocks returned by Rust
+        for i, ret_table in ipairs(ret_tables) do
+            if type(ret_table) == "table" and ret_table["Transport Header"] then
+                local t_len = ret_table.__block_len or ret_table.__transport_len
+                local offset = ret_table["Transport Header"].__offset_Transport_Header or 0
+                if type(offset) ~= "number" then offset = 0 end
+                
+                if t_len and t_len > 0 and (offset + t_len) <= len then
+                    pinfo.cols.protocol = "AIProtoDSL"
+                    
+                    local block_tvb = payload_tvb:range(offset, t_len)
+                    local subtree = tree:add(my_proto, block_tvb, "Dynamic Protocol Data (Cat " .. tostring(ret_table["Transport Header"].category) .. ")")
+                    
+                    if ret_table.__error then
+                        subtree:add_expert_info(PI_MALFORMED, PI_ERROR, "Rust failed to dissect block: " .. ret_table.__error)
+                    else
+                        add_table_to_tree(subtree, ret_table, offset, payload_tvb, false)
+                    end
+                end
+            elseif type(ret_table) == "table" and ret_table.__error then
+                tree:add_expert_info(PI_MALFORMED, PI_ERROR, "Error parsing block " .. tostring(i) .. ": " .. ret_table.__error)
             end
         end
     end
