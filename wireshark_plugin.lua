@@ -140,8 +140,21 @@ local function add_table_to_tree(tree, tbl, offset, buffer, is_list_item)
                         if enum_str then
                             val_str = string.format("%s (%s)", enum_str, tostring(v))
                         elseif q_str then
-                            -- Format the scalar and units together nicely instead of just `number`
-                            val_str = string.format("%s %s (raw: %s)", tostring(val_str), q_str, tostring(v))
+                            -- Parse fractions like "1/256 NM" or floats like "0.5 s"
+                            local num, den, unit = string.match(q_str, "(%-?%d+%.?%d*)/(%-?%d+%.?%d*)%s*(.*)")
+                            if num and den then
+                                local multiplier = tonumber(num) / tonumber(den)
+                                local float_val = tonumber(v) * multiplier
+                                val_str = string.format("%g %s (raw: %s)", float_val, unit or "", tostring(v))
+                            else
+                                local num2, unit2 = string.match(q_str, "(%-?%d+%.?%d*)%s*(.*)")
+                                if num2 then
+                                    local float_val = tonumber(v) * tonumber(num2)
+                                    val_str = string.format("%g %s (raw: %s)", float_val, unit2 or "", tostring(v))
+                                else
+                                    val_str = string.format("%s [%s]", tostring(v), q_str)
+                                end
+                            end
                         elseif type(v) == "number" then
                             val_str = string.format("%s (0x%X)", tostring(v), v)
                         end
