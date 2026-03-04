@@ -40,6 +40,20 @@ end
 
 local my_proto = Proto("aiprotodsl", "AIProtoDSL Native Dissector")
 
+local function is_empty_tree(tbl)
+    if type(tbl) ~= "table" then return false end
+    for k, v in pairs(tbl) do
+        if type(k) == "number" or (type(k) == "string" and k:sub(1, 2) ~= "__") then
+            if type(v) == "table" then
+                if not is_empty_tree(v) then return false end
+            else
+                return false
+            end
+        end
+    end
+    return true
+end
+
 local function add_table_to_tree(tree, tbl, offset, buffer, is_list_item)
     -- If it's a list item, we don't need to sort keys necessarily, but for tables we might
     local keys = {}
@@ -56,111 +70,112 @@ local function add_table_to_tree(tree, tbl, offset, buffer, is_list_item)
 
     for _, k in ipairs(keys) do
         local v = tbl[k]
-        if type(v) == "table" then
-            local subtree_name = tostring(k)
-            if type(k) == "string" and tbl["__doc_" .. k] then
-                subtree_name = tbl["__doc_" .. k] .. " (" .. k .. ")"
-            elseif type(k) == "number" and is_list_item then
-                subtree_name = "Item " .. tostring(k)
-            end
-            
-            local subtree
-            -- Use the actual length if the rust module provided it via `__len`
-            if v.__len then
-                subtree = tree:add(my_proto, buffer(offset, v.__len), subtree_name)
-                offset = offset + v.__len
-            else
-                local field_offset = offset
-                local field_len = 0
-                if type(k) == "string" and tbl["__offset_" .. k] and tbl["__len_" .. k] then
-                    field_offset = tonumber(tbl["__offset_" .. k])
-                    field_len = tonumber(tbl["__len_" .. k])
+        
+        -- Default: do not skip
+        local skip = false
+        if type(v) == "table" and is_empty_tree(v) then
+            skip = true
+        elseif type(v) == "string" and v == "" then
+            skip = true
+        end
+        
+        if not skip then
+            if type(v) == "table" then
+                local subtree_name = tostring(k)
+                if type(k) == "string" and tbl["__doc_" .. k] then
+                    subtree_name = tbl["__doc_" .. k] .. " (" .. k .. ")"
+                elseif type(k) == "number" and is_list_item then
+                    subtree_name = "Item " .. tostring(k)
                 end
                 
-                if field_offset >= buffer:len() then
-                    field_offset = buffer:len() - 1
-                    field_len = 0
-                end
-                if field_offset + field_len > buffer:len() then
-                    field_len = buffer:len() - field_offset
-                end
-                
-                if field_len > 0 then
-                    subtree = tree:add(my_proto, buffer(field_offset, field_len), subtree_name)
+                local subtree
+                -- Use the actual length if the rust module provided it via `__len`
+                if v.__len then
+                    subtree = tree:add(my_proto, buffer(offset, v.__len), subtree_name)
+                    offset = offset + v.__len
                 else
-                    subtree = tree:add(my_proto, buffer(field_offset, 1), subtree_name .. " [Truncated]")
-                end
-            end
-            
-            -- Pass true if this is a list containing only numeric keys
-            local child_is_list = false
-            if v[1] ~= nil then child_is_list = true end
-            
-            if v.__len then
-                add_table_to_tree(subtree, v, offset - v.__len, buffer, child_is_list)
-            else
-                add_table_to_tree(subtree, v, offset, buffer, child_is_list)
-            end
-        else
-            if type(k) == "string" and k:sub(1, 2) == "__" then
-                -- Skip internal keys
-            else
-                local title = tostring(k)
-                local val_str = tostring(v)
-                
-                if type(k) == "string" then
-                    local doc_str = tbl["__doc_" .. k]
-                    local q_str = tbl["__quantum_" .. k]
-                    local enum_str = tbl["__enum_" .. k]
+                    local field_offset = offset
+                    local field_len = 0
+                    if type(k) == "string" and tbl["__offset_" .. k] and tbl["__len_" .. k] then
+                        field_offset = tonumber(tbl["__offset_" .. k])
+                        field_len = tonumber(tbl["__len_" .. k])
+                    end
                     
-                    if enum_str then
-                        val_str = string.format("%s (%s)", enum_str, tostring(v))
-                    elseif q_str then
-                        -- Quantum is expressed as e.g. "1/256 NM" or "1 s"
-                        -- We can use a simple pattern to extract float values
-                        local num, den, unit = string.match(q_str, "(%d+)/(%d+)%s*(.*)")
-                        if num and den then
-                            local multiplier = tonumber(num) / tonumber(den)
-                            local float_val = tonumber(v) * multiplier
-                            val_str = string.format("%g %s (raw: %s)", float_val, unit or "", tostring(v))
-                        else
-                            local num2, unit2 = string.match(q_str, "(%d+%.?%d*)%s*(.*)")
-                            if num2 then
-                                local float_val = tonumber(v) * tonumber(num2)
-                                val_str = string.format("%g %s (raw: %s)", float_val, unit2 or "", tostring(v))
-                            else
-                                val_str = string.format("%s [%s]", tostring(v), q_str)
-                            end
+                    if field_offset >= buffer:len() then
+                        field_offset = buffer:len() - 1
+                        field_len = 0
+                    end
+                    if field_offset + field_len > buffer:len() then
+                        field_len = buffer:len() - field_offset
+                    end
+                    
+                    if field_len > 0 then
+                        subtree = tree:add(my_proto, buffer(field_offset, field_len), subtree_name)
+                    else
+                        subtree = tree:add(my_proto, buffer(field_offset, 1), subtree_name .. " [Truncated]")
+                    end
+                end
+                
+                -- Pass true if this is a list containing only numeric keys
+                local child_is_list = false
+                if v[1] ~= nil then child_is_list = true end
+                
+                if v.__len then
+                    add_table_to_tree(subtree, v, offset - v.__len, buffer, child_is_list)
+                else
+                    add_table_to_tree(subtree, v, offset, buffer, child_is_list)
+                end
+            else
+                if type(k) == "string" and k:sub(1, 2) == "__" then
+                    -- Skip internal keys
+                else
+                    local title = tostring(k)
+                    local val_str = tostring(v)
+                    
+                    if type(k) == "string" then
+                        local doc_str = tbl["__doc_" .. k]
+                        local q_str = tbl["__quantum_" .. k]
+                        local enum_str = tbl["__enum_" .. k]
+                        
+                        if enum_str then
+                            val_str = string.format("%s (%s)", enum_str, tostring(v))
+                        elseif q_str then
+                            -- Format the scalar and units together nicely instead of just `number`
+                            val_str = string.format("%s %s (raw: %s)", tostring(val_str), q_str, tostring(v))
+                        elseif type(v) == "number" then
+                            val_str = string.format("%s (0x%X)", tostring(v), v)
                         end
-                    elseif type(v) == "number" then
-                        val_str = string.format("%s (0x%X)", tostring(v), v)
+                        
+                        if doc_str and doc_str ~= "" then
+                            title = doc_str .. " (" .. k .. ")"
+                        end
                     end
                     
-                    if doc_str then
-                        title = doc_str .. " (" .. k .. ")"
+                    local field_offset = offset
+                    local field_len = 0
+                    
+                    if type(k) == "string" then
+                        if tbl["__offset_" .. k] then field_offset = tonumber(tbl["__offset_" .. k]) end
+                        if tbl["__len_" .. k]    then field_len    = tonumber(tbl["__len_" .. k]) end
                     end
-                end
-                
-                local field_offset = offset
-                local field_len = 0
-                
-                if type(k) == "string" then
-                    if tbl["__offset_" .. k] then field_offset = offset + tonumber(tbl["__offset_" .. k]) end
-                    if tbl["__len_" .. k]    then field_len    = tonumber(tbl["__len_" .. k]) end
-                end
-                
-                if field_offset >= buffer:len() then
-                    field_offset = buffer:len() - 1
-                    field_len = 0
-                end
-                if field_offset + field_len > buffer:len() then
-                    field_len = buffer:len() - field_offset
-                end
+                    
+                    if field_offset >= buffer:len() then
+                        field_offset = buffer:len() - 1
+                        field_len = 0
+                    end
+                    if field_offset + field_len > buffer:len() then
+                        field_len = buffer:len() - field_offset
+                    end
 
-                if field_len > 0 then
-                    tree:add(my_proto, buffer(field_offset, field_len), string.format("%s: %s", title, val_str))
-                else
-                    tree:add(my_proto, buffer(field_offset), string.format("%s: %s", title, val_str))
+                    if field_len > 0 then
+                        tree:add(my_proto, buffer(field_offset, field_len), string.format("%s: %s", title, val_str))
+                    else
+                        if buffer:len() > 0 then
+                            tree:add(my_proto, buffer(field_offset, 1), string.format("%s: %s [Truncated]", title, val_str))
+                        else
+                            tree:add(my_proto, string.format("%s: %s [No Buffer Data]", title, val_str))
+                        end
+                    end
                 end
             end
         end
