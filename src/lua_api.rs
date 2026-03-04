@@ -1,6 +1,6 @@
 use crate::{parse, ResolvedProtocol, codec::{Codec, Endianness}, value::Value};
 use mlua::prelude::*;
-use mlua::UserData;
+use mlua::{UserData, UserDataMethods};
 use std::sync::Arc;
 use std::collections::HashMap;
 
@@ -8,7 +8,121 @@ use std::collections::HashMap;
 #[derive(Clone)]
 struct ProtocolUserData(Arc<ResolvedProtocol>);
 
-impl UserData for ProtocolUserData {}
+
+
+/// Helper to convert a TypeSpec to a Wireshark ftype string
+fn type_spec_to_ftype(spec: &crate::ast::TypeSpec) -> &'static str {
+    use crate::ast::{TypeSpec, BaseType};
+    match spec {
+        TypeSpec::Base(bt) | TypeSpec::SizedInt(bt, _) => match bt {
+            BaseType::U8 => "uint8",
+            BaseType::U16 => "uint16",
+            BaseType::U32 => "uint32",
+            BaseType::U64 => "uint64",
+            BaseType::I8 => "int8",
+            BaseType::I16 => "int16",
+            BaseType::I32 => "int32",
+            BaseType::I64 => "int64",
+            BaseType::Bool => "bool",
+            BaseType::Float => "float",
+            BaseType::Double => "double",
+        },
+        TypeSpec::Bitfield(bits) => {
+            if *bits <= 8 { "uint8" }
+            else if *bits <= 16 { "uint16" }
+            else if *bits <= 32 { "uint32" }
+            else { "uint64" }
+        },
+        TypeSpec::PresenceBits(bytes) => {
+            if *bytes <= 1 { "uint8" }
+            else if *bytes <= 2 { "uint16" }
+            else if *bytes <= 4 { "uint32" }
+            else { "uint64" }
+        },
+        TypeSpec::Optional(inner) => type_spec_to_ftype(inner),
+        _ => "uint64", // Fallback
+    }
+}
+
+impl UserData for ProtocolUserData {
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("get_all_fields", |lua, this, _: ()| {
+            let proto = &this.0;
+            let mut fields = HashMap::new();
+
+            // Helper to add a field if not already present
+            let mut add_field = |container: &str, name: &str, type_spec: &crate::ast::TypeSpec, doc: Option<&str>, quantum: Option<&str>| -> mlua::Result<()> {
+                if fields.contains_key(name) {
+                    return Ok(());
+                }
+
+                let f_table = lua.create_table()?;
+                f_table.set("name", name)?;
+                f_table.set("type", type_spec_to_ftype(type_spec))?;
+                if let Some(d) = doc {
+                    f_table.set("doc", d)?;
+                }
+                if let Some(q) = quantum {
+                    f_table.set("quantum", q)?;
+                }
+
+                // Identify if this is an enum
+                let enum_info = proto.field_constraint(container, name);
+                if let Some(crate::ast::Constraint::Enum(variants)) = enum_info {
+                    let vt = lua.create_table()?;
+                    for var in variants {
+                        if let crate::ast::Literal::Int(val) = var {
+                            if let Some(variant_name) = proto.enum_variant_name_for_type_and_value(type_spec, *val) {
+                                vt.set(*val, variant_name)?;
+                            }
+                        }
+                    }
+                    f_table.set("enum", vt)?;
+                }
+
+                fields.insert(name.to_string(), f_table);
+                Ok(())
+            };
+
+            // Collect fields from the transport header
+            if let Some(transport_def) = &proto.protocol.transport {
+                for field in &transport_def.fields {
+                    let doc = proto.field_doc("transport", &field.name);
+                    let type_spec = match &field.type_spec {
+                        crate::ast::TransportTypeSpec::Base(bt) => crate::ast::TypeSpec::Base(bt.clone()),
+                        crate::ast::TransportTypeSpec::SizedInt(bt, bits) => crate::ast::TypeSpec::SizedInt(bt.clone(), *bits),
+                        _ => crate::ast::TypeSpec::Base(crate::ast::BaseType::U64),
+                    };
+                    add_field("transport", &field.name, &type_spec, doc, field.quantum.as_deref())?;
+                }
+            }
+
+            // Collect fields from all messages
+            for msg in &proto.protocol.messages {
+                for field in &msg.fields {
+                    let doc = proto.field_doc(&msg.name, &field.name).or(field.doc.as_deref());
+                    add_field(&msg.name, &field.name, &field.type_spec, doc, field.quantum.as_deref())?;
+                }
+            }
+
+            // Collect fields from all structs
+            for s in &proto.protocol.structs {
+                for field in &s.fields {
+                    let doc = proto.field_doc(&s.name, &field.name);
+                    add_field(&s.name, &field.name, &field.type_spec, doc, field.quantum.as_deref())?;
+                }
+            }
+
+            let result = lua.create_table()?;
+            let mut i = 1;
+            for (_, f_table) in fields {
+                result.set(i, f_table)?;
+                i += 1;
+            }
+            Ok(result)
+        });
+    }
+}
 
 /// Parse a DSL file and return a Lua UserData object holding the ResolvedProtocol.
 fn load_dsl(_: &Lua, filepath: String) -> LuaResult<ProtocolUserData> {
